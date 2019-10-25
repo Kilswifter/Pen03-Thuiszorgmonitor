@@ -61,7 +61,7 @@ String serial_received_request[4];
 boolean serial_new_data = false;           // bool to check if message is complete
 
 // global run variables
-bool send_live_data = true;
+bool send_live_data = false;
 
 
 // mqtt broker class
@@ -84,8 +84,10 @@ public:
       data_str[length] = '\0';  // final received message
 
       debugPrintLn("Received topic '" + topic + "' with data '" + (String)data_str + "'");
-      Serial.println((String)data_str);
-
+      if (send_live_data == true) {
+        Serial.println((String)data_str);
+      }
+      
       if (topic == "ECG") {
         debugPrintLn("ECG received");
         char *data_to_decrypt = data_str;  // copy of received data
@@ -230,6 +232,10 @@ void actOnNewSerialData() {
 
       if (String(part_of_message) == "test") {
         digitalWrite(LED_BUILTIN_PIN, LOW);  //temp test
+      }
+
+      if (String(part_of_message) == "REQUESTLIVEDATA") {
+        send_live_data = true;
       }
 
 
