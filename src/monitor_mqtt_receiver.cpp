@@ -15,13 +15,13 @@
 #define LED_BUILTIN_PIN 2           // buildin led pin
 
 // changeable parameters
-bool DEBUG = false;
+bool DEBUG = true;
 const int bits_per_measure = 16;
 const int bits_per_encryption = 128;
 const int measurements_per_encryption = bits_per_encryption / bits_per_measure;
 
 // wifi AP config
-char ssid[] = "ESP_receiver_1";
+char ssid[] = "ESP_reciever_1";
 char pass[] = "123456789";
 bool WiFiAP = true;
 
@@ -48,7 +48,8 @@ int backlog_index = 0;
 **/
 
 // measurement buffers
-const byte measurement_1_buffer_length = 16;
+//  1 = ECG
+const byte measurement_1_buffer_length = 128;
 int measurement_1_buffer_index = 0;
 int measurement_1_buffer[measurement_1_buffer_length];
 bool is_buffer_1_empty = true;
@@ -87,13 +88,12 @@ public:
       if (send_live_data == true) {
         Serial.println((String)data_str);
       }
-      
+
       if (topic == "ECG") {
         debugPrintLn("ECG received");
         char *data_to_decrypt = data_str;  // copy of received data
         int decrypted_data[measurements_per_encryption];  // empty array for decrypted message
         decryptData(data_to_decrypt, decrypted_data);  // decrypting message
-        printIntArray(decrypted_data);
 
         addDataToBuffer(decrypted_data, measurement_1_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
         printIntArray(measurement_1_buffer);
@@ -182,6 +182,7 @@ void startWiFiAP()
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid, pass);
   debugPrintLn("AP started");
+  debugPrintLn("ssid: " + (String)ssid)
   debugPrintLn("IP address: " + WiFi.softAPIP().toString());
 }
 
