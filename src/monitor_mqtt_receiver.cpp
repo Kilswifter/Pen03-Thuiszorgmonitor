@@ -18,7 +18,8 @@
 bool DEBUG = true;
 const int bits_per_measure = 16;
 const int bits_per_encryption = 128;
-const int measurements_per_encryption = bits_per_encryption / bits_per_measure;
+const int shifts_per_encryption = bits_per_encryption / bits_per_measure; // 8
+const int measurements_per_shift = 12;
 
 // wifi AP config
 char ssid[] = "ESP_reciever_1";
@@ -30,22 +31,17 @@ void startWiFiClient();
 void startWiFiAP();
 void receiveSerial();
 void actOnNewSerialData();
-void printIntArray(int *array);
+void printIntArray(int *array, int size_of_array);
 void printArray(char *array);
 void decryptData(char *data_to_decrypt, int *decrypted_data);
-void addDataToBuffer(int *decrypted_data, int *measurement_buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty);
+void deshiftData(int *decrypted_data, int *deshifted_data);
+void addDataToBuffer(int *deshifted_data, int *measurement_buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty);
 void sendBuffer(String topic, int *buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty);
 void resetMeasurementBuffer(int *buffer, const byte buffer_length, int &buffer_index);
 void debugPrintLn(String str);
 void debugPrint(String str);
 
 
-/**
-String received_data_backlog_1[1024];
-int backlog_index_1 = 0;
-char received_data_backlog_2[1024];
-int backlog_index = 0;
-**/
 
 // measurement buffers
 //  1 = ECG
@@ -57,9 +53,10 @@ bool is_buffer_1_empty = true;
 // communication buffers
 const byte serial_buffer_length = 32;          // predefined max buffer size
 char serial_buffer[serial_buffer_length];     // buffer for received messages
-
-String serial_received_request[4];
 boolean serial_new_data = false;           // bool to check if message is complete
+
+//String serial_received_request[4];         // max amount of requests
+
 
 // global run variables
 bool send_live_data = false;
@@ -74,31 +71,46 @@ public:
       return true;
     }
 
+    /*
     virtual bool onAuth(String username, String password) {  // not used
       debugPrintLn("Username/Password: " + username + "/" + password);
       return true;
     }
+    */
 
     virtual void onData(String topic, const char *data, uint32_t length) {
+      // topic = onderwerp van mqtt bericht
+      // data = bericht, ingelezen als een char buffer
+      // length = lengte van bericht
+
+      // converteren van bericht
       char data_str[length+1];
       os_memcpy(data_str, data, length);
       data_str[length] = '\0';  // final received message
 
       debugPrintLn("Received topic '" + topic + "' with data '" + (String)data_str + "'");
+
       if (send_live_data == true) {
         Serial.println((String)data_str);
       }
 
+      if (topic == "test") {
+        Serial.println(data_str);
+      }
+
+      // 1
       if (topic == "ECG") {
         debugPrintLn("ECG received");
+
         char *data_to_decrypt = data_str;  // copy of received data
-        int decrypted_data[measurements_per_encryption];  // empty array for decrypted message
+        int decrypted_data[shifts_per_encryption];  // empty array for decrypted message
         decryptData(data_to_decrypt, decrypted_data);  // decrypting message
 
-        addDataToBuffer(decrypted_data, measurement_1_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
-        printIntArray(measurement_1_buffer);
-        //received_data_backlog_1[backlog_index_1] = (String)data;
-        //backlog_index_1 ++;
+        int deshifted_data[measurements_per_shift]; // empty array for deshifted message
+        deshiftData(decrypted_data, deshifted_data);
+
+        addDataToBuffer(deshifted_data, measurement_1_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
+
       }
     }
 };
@@ -137,16 +149,15 @@ void loop()
 {
 
   //myBroker.publish("broker/counter", (String)counter++);
-  receiveSerial();
-  actOnNewSerialData();
+  receiveSerial(); // schijf binnekomend bericht naar buffer
+  actOnNewSerialData(); // interpreteer en reageer
 
-  if (send_live_data) {
-
+  if (send_live_data && is_buffer_1_empty == false) {
     sendBuffer("ECG", measurement_1_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
   }
 
 
-  delay(10);
+  delay(1000);
 }
 
 
@@ -182,7 +193,7 @@ void startWiFiAP()
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid, pass);
   debugPrintLn("AP started");
-  debugPrintLn("ssid: " + (String)ssid)
+  debugPrintLn("ssid: " + (String)ssid);
   debugPrintLn("IP address: " + WiFi.softAPIP().toString());
 }
 
@@ -228,7 +239,7 @@ void actOnNewSerialData() {
     char *part_of_message;
     int current_index = 0;
     while ((part_of_message = strtok_r(p, "/", &p)) != NULL) {
-      serial_received_request[current_index] = part_of_message;
+      //serial_received_request[current_index] = part_of_message;
       debugPrintLn(part_of_message);
 
       if (String(part_of_message) == "test") {
@@ -237,6 +248,10 @@ void actOnNewSerialData() {
 
       if (String(part_of_message) == "REQUESTLIVEDATA") {
         send_live_data = true;
+      }
+
+      if (String(part_of_message) == "REQUESTBULKDATA") {
+
       }
 
 
@@ -257,41 +272,70 @@ void decryptData(char *data_to_decrypt, int *decrypted_data) {
     decrypted_data[i] = i;
   }
 
-  //Serial.println("Decrypted message : [" + String(decrypted_data) + "]");
+  debugPrint("Decrypted data : [");
+  printIntArray(decrypted_data, shifts_per_encryption);
+  debugPrintLn("]");
+
+}
+
+void deshiftData(int *decrypted_data, int *deshifted_data) {
+  debugPrint("Deshifting data : [");
+  printIntArray(decrypted_data, shifts_per_encryption);
+  debugPrintLn("]");
+
+  for (int i=0; i<12; i++) {
+    deshifted_data[i] = i;
+  }
+
+  debugPrint("Deshifted data : [");
+  printIntArray(deshifted_data, measurements_per_shift);
+  debugPrintLn("]");
 }
 
 
 
-void addDataToBuffer(int *decrypted_data, int *measurement_buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty) {
+void addDataToBuffer(int *deshifted_data, int *measurement_buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty) {
   debugPrintLn("Adding data to buffer");
-  if ((buffer_length - buffer_index) < measurements_per_encryption) {
+
+  // als er niet voldoende plaats over is in buffer
+  if ((buffer_length - buffer_index) < measurements_per_shift) {
     debugPrintLn("Buffer out of space!");
     return;
   }
-  int max_i = measurements_per_encryption;
-  for (int i=0; i<max_i; i++) {
-    measurement_buffer[buffer_index] = decrypted_data[i];
+
+  for (int i=0; i<measurements_per_shift; i++) {
+    measurement_buffer[buffer_index] = deshifted_data[i];
     buffer_index++;
   }
+
+  debugPrintLn("Buffer filled with data");
   is_buffer_empty = false;
 }
 
 void sendBuffer(String topic, int *buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty) {
+
   if (is_buffer_empty) {
     return;
   }
-  Serial.println(topic);
+
+  if (topic == "ECG") {
+    Serial.println("---");
+  }
+
+
   for(int i = 0; i < buffer_length; i++) {
     if (buffer[i] != -1) {
-      Serial.println(buffer[i]);
-    }
+      Serial.print(buffer[i]); // Serial.write
+      if (i != buffer_length-1) {
+        Serial.print(";"); // delimiter
+      }
 
+    }
   }
-  Serial.println("END" + topic);
+  Serial.println("");
+
   resetMeasurementBuffer(buffer, buffer_length, buffer_index);
   is_buffer_empty = true;
-
-
 
 }
 
@@ -304,13 +348,9 @@ void resetMeasurementBuffer(int *buffer, const byte buffer_length, int &buffer_i
 
 
 
-void printIntArray(int *array) {
-  int size_of_array = measurements_per_encryption; //sizeof(array)/sizeof(int);
+void printIntArray(int *array, int size_of_array) {
   for(int i = 0; i < size_of_array; i++) {
-    debugPrint("[");
-    debugPrint((String)i);
-    debugPrint("] - ");
-    debugPrintLn((String)array[i]);
+    debugPrint((String)array[i]);
   }
   debugPrintLn("");
 }
@@ -321,7 +361,6 @@ void printArray(char *array) {
   for(int i = 0; i < size_of_array; i++) {
     debugPrint((String)array[i]);
   }
-  debugPrintLn("");
 }
 
 void debugPrintLn(String str) {
