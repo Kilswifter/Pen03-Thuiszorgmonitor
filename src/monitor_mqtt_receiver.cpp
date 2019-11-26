@@ -170,7 +170,7 @@ public:
       unSplitBuffer(data_to_unsplit, desplitted_data, bit_groups);
 
       // decrypt 8x16bit integers to 8x16bit integers
-      uint16_t *data_to_decrypt = deUnicoded_data;  // copy of received data
+      uint16_t *data_to_decrypt = desplitted_data;  // copy of received data
       uint16_t decrypted_data[bit_groups];  // empty array for decrypted message
       decryptData(data_to_decrypt, decrypted_data);  // decrypting message
 
@@ -181,7 +181,7 @@ public:
 
       // put data in its buffer for later use
       addDataToBuffer(deshifted_data, measurement_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
-
+      debugPrintLn("");
     }
 };
 
@@ -350,7 +350,7 @@ void deUnicodeData(char *data_to_deUnicode, uint16_t *deUnicoded_data) {
   }
 
   debugPrint("DeUnicoded data : [");
-  printIntArray(deUnicoded_data, bit_groups);
+  printIntArray(deUnicoded_data, bit_groups*2);
   debugPrintLn("]");
 }
 
@@ -469,7 +469,7 @@ void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &bu
 
 
   for(int i = 0; i < buffer_length; i++) {
-    if (buffer[i] != -1) {
+    if (buffer[i] != 0) {  // uitgaande dat 0 nooit voorkomt
       Serial.print(buffer[i]); // Serial.write
       if (i != buffer_length-1) {
         Serial.print(" "); // delimiter
@@ -478,6 +478,7 @@ void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &bu
     }
   }
   Serial.print("\n");
+  debugPrintLn("");
 
   resetMeasurementBuffer(buffer, buffer_length, buffer_index, is_buffer_empty);
   is_buffer_empty = true;
@@ -485,7 +486,7 @@ void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &bu
 
 void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
   for(int i = 0; i < buffer_length; i++) {
-    buffer[i] = -1;
+    buffer[i] = 0;
   }
   buffer_index = 0;
   is_buffer_empty = true;
@@ -495,8 +496,8 @@ void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buff
 void printIntArray(uint16_t *array, const int size_of_array) {
   for(int i = 0; i < size_of_array; i++) {
     debugPrint((String)array[i]);
+    debugPrint(",");
   }
-  debugPrintLn("");
 }
 
 
