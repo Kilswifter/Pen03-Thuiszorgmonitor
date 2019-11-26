@@ -15,11 +15,12 @@
 #define LED_BUILTIN_PIN 2           // buildin led pin
 
 // changeable parameters
-bool DEBUG = true;
-const int bits_per_measure = 16;
+bool DEBUG = false;
+const int bits_per_int = 16;
+const int bits_per_measurement = 10;
 const int bits_per_encryption = 128;
-const int shifts_per_encryption = bits_per_encryption / bits_per_measure; // 8
-const int measurements_per_shift = 12;
+const int bit_groups = bits_per_encryption / bits_per_int; // 8
+const int measurement_groups = 12;
 
 // wifi AP config
 char ssid[] = "ESP_reciever_1";
@@ -31,13 +32,14 @@ void startWiFiClient();
 void startWiFiAP();
 void receiveSerial();
 void actOnNewSerialData();
-void printIntArray(int *array, int size_of_array);
+void printIntArray(uint16_t *array, const int size_of_array);
 void printArray(char *array);
-void decryptData(char *data_to_decrypt, int *decrypted_data);
-void deshiftData(int *decrypted_data, int *deshifted_data);
-void addDataToBuffer(int *deshifted_data, int *measurement_buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty);
-void sendBuffer(String topic, int *buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty);
-void resetMeasurementBuffer(int *buffer, const byte buffer_length, int &buffer_index);
+void deUnicodeData(char *data_to_deUnicode, uint16_t *deUnicoded_data);
+void decryptData(uint16_t *data_to_decrypt, uint16_t *decrypted_data);
+void deshiftData(uint16_t *shifted_buffer, const int shifted_buffer_length, uint16_t *deshifted_buffer, int deshifted_buffer_length);
+void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
+void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
+void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
 void debugPrintLn(String str);
 void debugPrint(String str);
 
@@ -45,10 +47,48 @@ void debugPrint(String str);
 
 // measurement buffers
 //  1 = ECG
-const byte measurement_1_buffer_length = 128;
+const int measurement_1_buffer_length = 128;
 int measurement_1_buffer_index = 0;
-int measurement_1_buffer[measurement_1_buffer_length];
+uint16_t measurement_1_buffer[measurement_1_buffer_length];
 bool is_buffer_1_empty = true;
+// 2 = PPG
+const int measurement_2_buffer_length = 128;
+int measurement_2_buffer_index = 0;
+uint16_t measurement_2_buffer[measurement_2_buffer_length];
+bool is_buffer_2_empty = true;
+// 3 = zweet
+const int measurement_3_buffer_length = 128;
+int measurement_3_buffer_index = 0;
+uint16_t measurement_3_buffer[measurement_3_buffer_length];
+bool is_buffer_3_empty = true;
+// 4 = voetdruk
+const int measurement_4_buffer_length = 128;
+int measurement_4_buffer_index = 0;
+uint16_t measurement_4_buffer[measurement_4_buffer_length];
+bool is_buffer_4_empty = true;
+
+const int sensor_count = 4;
+
+int measurement_n_buffer_length[sensor_count] = {measurement_1_buffer_length,
+                                                 measurement_2_buffer_length,
+                                                 measurement_3_buffer_length,
+                                                 measurement_4_buffer_length};
+uint16_t* measurement_n_buffer[sensor_count] = {measurement_1_buffer,
+                                           measurement_2_buffer,
+                                           measurement_3_buffer,
+                                           measurement_4_buffer};
+int measurement_n_buffer_index[sensor_count] = {measurement_1_buffer_index,
+                                                measurement_2_buffer_index,
+                                                measurement_3_buffer_index,
+                                                measurement_4_buffer_index};
+bool is_buffer_n_empty[sensor_count] = {is_buffer_1_empty,
+                                        is_buffer_2_empty,
+                                        is_buffer_3_empty,
+                                        is_buffer_4_empty};
+
+
+
+
 
 // communication buffers
 const byte serial_buffer_length = 32;          // predefined max buffer size
@@ -83,6 +123,8 @@ public:
       // data = bericht, ingelezen als een char buffer
       // length = lengte van bericht
 
+      //scanf
+
       // converteren van bericht
       char data_str[length+1];
       os_memcpy(data_str, data, length);
@@ -98,20 +140,42 @@ public:
         Serial.println(data_str);
       }
 
+      int n_index;
       // 1
       if (topic == "ECG") {
         debugPrintLn("ECG received");
-
-        char *data_to_decrypt = data_str;  // copy of received data
-        int decrypted_data[shifts_per_encryption];  // empty array for decrypted message
-        decryptData(data_to_decrypt, decrypted_data);  // decrypting message
-
-        int deshifted_data[measurements_per_shift]; // empty array for deshifted message
-        deshiftData(decrypted_data, deshifted_data);
-
-        addDataToBuffer(deshifted_data, measurement_1_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
-
+        n_index = 0;
       }
+      // 2
+      if (topic == "PPG") {
+        debugPrintLn("ECG received");
+        n_index = 1;
+      }
+
+      // setting variables according to topic
+      uint16_t *measurement_buffer = measurement_n_buffer[n_index];
+      int measurement_buffer_length = measurement_n_buffer_length[n_index];
+      int measurement_buffer_index = measurement_n_buffer_index[n_index];
+      bool is_buffer_empty = is_buffer_n_empty[n_index];
+
+      // convert Unicode string to 8x16bit integers
+      char *data_to_deUnicode = data_str;
+      uint16_t deUnicoded_data[bit_groups];
+      deUnicodeData(data_to_deUnicode, deUnicoded_data);
+
+      // decrypt 8x16bit integers to shifted 8x16bit integers
+      uint16_t *data_to_decrypt = deUnicoded_data;  // copy of received data
+      uint16_t decrypted_data[bit_groups];  // empty array for decrypted message
+      decryptData(data_to_decrypt, decrypted_data);  // decrypting message
+
+      // deshift 8x16bit integers to 12x16(10)bit integers
+      uint16_t *data_to_deshift = decrypted_data;
+      uint16_t deshifted_data[measurement_groups]; // empty array for deshifted message
+      deshiftData(data_to_deshift, bit_groups, deshifted_data, measurement_groups);
+
+      // put data in its buffer for later use
+      addDataToBuffer(deshifted_data, measurement_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
+
     }
 };
 
@@ -126,14 +190,20 @@ void setup()
   debugPrintLn("                ESP started running\n");
   debugPrintLn("***************************************************\n");
 
-  // Start WiFi
+  // Start WiFi AP
   debugPrintLn("Starting network connection");
   if (WiFiAP)
     startWiFiAP();
   else
     startWiFiClient();
 
-  resetMeasurementBuffer(measurement_1_buffer, measurement_1_buffer_length, measurement_1_buffer_index);
+  // filling buffers with zeros
+  for (int i=0; i<sensor_count; i++) {
+    resetMeasurementBuffer(measurement_n_buffer[i],
+                           measurement_n_buffer_length[i],
+                           measurement_n_buffer_index[i],
+                           is_buffer_n_empty[i]);
+  }
 
   // Start the broker
   debugPrintLn("Starting MQTT broker");
@@ -263,9 +333,25 @@ void actOnNewSerialData() {
 }
 
 
-void decryptData(char *data_to_decrypt, int *decrypted_data) {
+void deUnicodeData(char *data_to_deUnicode, uint16_t *deUnicoded_data) {
+  debugPrint("DeUnicoding data : [");
+  debugPrint(data_to_deUnicode);
+  debugPrintLn("]");
+
+  for (int i=0; i<bit_groups; i++) {
+    uint16_t element = uint16_t(data_to_deUnicode[i]);
+    deUnicoded_data[i] = element;
+  }
+
+  debugPrint("DeUnicoded data : [");
+  printIntArray(deUnicoded_data, bit_groups);
+  debugPrintLn("]");
+}
+
+
+void decryptData(uint16_t *data_to_decrypt, uint16_t *decrypted_data) {
   debugPrint("Decrypting data : [");
-  debugPrint(data_to_decrypt);
+  printIntArray(data_to_decrypt, bit_groups);
   debugPrintLn("]");
 
   for (int i=0; i<8; i++) {
@@ -273,37 +359,64 @@ void decryptData(char *data_to_decrypt, int *decrypted_data) {
   }
 
   debugPrint("Decrypted data : [");
-  printIntArray(decrypted_data, shifts_per_encryption);
+  printIntArray(decrypted_data, bit_groups);
   debugPrintLn("]");
-
 }
 
-void deshiftData(int *decrypted_data, int *deshifted_data) {
+
+void deshiftData(uint16_t *shifted_data, const int shifted_data_length, uint16_t *deshifted_data, const int deshifted_data_length) {
   debugPrint("Deshifting data : [");
-  printIntArray(decrypted_data, shifts_per_encryption);
+  printIntArray(shifted_data, bit_groups);
   debugPrintLn("]");
 
-  for (int i=0; i<12; i++) {
-    deshifted_data[i] = i;
+  int current_buffer_index = 12 - 1;
+  int current_shifted_buffer_index = 8 - 1;
+  int current_bits_to_shift = bits_per_int - bits_per_measurement;
+
+  while (true) {
+    if (current_buffer_index < 0) {
+        break;
+    }
+
+    int new_element_to_shift = shifted_data[current_shifted_buffer_index];
+
+    if (current_bits_to_shift >= bits_per_int) {
+        current_bits_to_shift = bits_per_int - bits_per_measurement;
+    } else {
+        int current_buffer_element = deshifted_data[current_buffer_index];
+        int bits_to_stay = uint16_t(new_element_to_shift << (current_bits_to_shift)) >> (bits_per_int - bits_per_measurement);
+        current_buffer_element = current_buffer_element + bits_to_stay;
+        deshifted_data[current_buffer_index] = current_buffer_element;
+
+
+        int bits_to_shift = uint16_t(new_element_to_shift >> (bits_per_int - current_bits_to_shift));
+        deshifted_data[current_buffer_index-1] = bits_to_shift;
+
+
+        current_bits_to_shift = current_bits_to_shift + (bits_per_int - bits_per_measurement);
+        current_shifted_buffer_index --;
+    }
+    current_buffer_index --;
   }
 
   debugPrint("Deshifted data : [");
-  printIntArray(deshifted_data, measurements_per_shift);
+  printIntArray(deshifted_data, measurement_groups);
   debugPrintLn("]");
 }
 
 
 
-void addDataToBuffer(int *deshifted_data, int *measurement_buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty) {
+
+void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
   debugPrintLn("Adding data to buffer");
 
   // als er niet voldoende plaats over is in buffer
-  if ((buffer_length - buffer_index) < measurements_per_shift) {
+  if ((buffer_length - buffer_index) < measurement_groups) {
     debugPrintLn("Buffer out of space!");
     return;
   }
 
-  for (int i=0; i<measurements_per_shift; i++) {
+  for (int i=0; i<measurement_groups; i++) {
     measurement_buffer[buffer_index] = deshifted_data[i];
     buffer_index++;
   }
@@ -312,14 +425,23 @@ void addDataToBuffer(int *deshifted_data, int *measurement_buffer, const byte bu
   is_buffer_empty = false;
 }
 
-void sendBuffer(String topic, int *buffer, const byte buffer_length, int &buffer_index, bool &is_buffer_empty) {
+void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
 
   if (is_buffer_empty) {
     return;
   }
 
   if (topic == "ECG") {
-    Serial.println("---");
+    Serial.print("E");
+  }
+  if (topic == "PPG") {
+    Serial.print("P");
+  }
+  if (topic == "ZWEET") {
+    Serial.print("Z");
+  }
+  if (topic == "VOETDRUK") {
+    Serial.print("V");
   }
 
 
@@ -327,28 +449,29 @@ void sendBuffer(String topic, int *buffer, const byte buffer_length, int &buffer
     if (buffer[i] != -1) {
       Serial.print(buffer[i]); // Serial.write
       if (i != buffer_length-1) {
-        Serial.print(";"); // delimiter
+        Serial.print(" "); // delimiter
       }
 
     }
   }
-  Serial.println("");
+  Serial.print("\n");
 
-  resetMeasurementBuffer(buffer, buffer_length, buffer_index);
+  resetMeasurementBuffer(buffer, buffer_length, buffer_index, is_buffer_empty);
   is_buffer_empty = true;
 
 }
 
-void resetMeasurementBuffer(int *buffer, const byte buffer_length, int &buffer_index) {
+void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
   for(int i = 0; i < buffer_length; i++) {
     buffer[i] = -1;
   }
   buffer_index = 0;
+  is_buffer_empty = true;
 }
 
 
 
-void printIntArray(int *array, int size_of_array) {
+void printIntArray(uint16_t *array, const int size_of_array) {
   for(int i = 0; i < size_of_array; i++) {
     debugPrint((String)array[i]);
   }
