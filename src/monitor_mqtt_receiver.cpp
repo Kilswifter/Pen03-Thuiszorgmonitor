@@ -15,7 +15,7 @@
 #define LED_BUILTIN_PIN 2           // buildin led pin
 
 // changeable parameters
-bool DEBUG = false;
+bool DEBUG = true;
 const int bits_per_int = 16;
 const int bits_per_measurement = 10;
 const int bits_per_encryption = 128;
@@ -35,6 +35,7 @@ void actOnNewSerialData();
 void printIntArray(uint16_t *array, const int size_of_array);
 void printArray(char *array);
 void deUnicodeData(char *data_to_deUnicode, uint16_t *deUnicoded_data);
+void unSplitBuffer(uint16_t *before_buffer, uint16_t *after_buffer, const int after_buffer_length);
 void decryptData(uint16_t *data_to_decrypt, uint16_t *decrypted_data);
 void deshiftData(uint16_t *shifted_buffer, const int shifted_buffer_length, uint16_t *deshifted_buffer, int deshifted_buffer_length);
 void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
@@ -158,12 +159,17 @@ public:
       int measurement_buffer_index = measurement_n_buffer_index[n_index];
       bool is_buffer_empty = is_buffer_n_empty[n_index];
 
-      // convert Unicode string to 8x16bit integers
+      // convert Unicode string to 16x8bit integers
       char *data_to_deUnicode = data_str;
-      uint16_t deUnicoded_data[bit_groups];
+      uint16_t deUnicoded_data[bit_groups*2];
       deUnicodeData(data_to_deUnicode, deUnicoded_data);
 
-      // decrypt 8x16bit integers to shifted 8x16bit integers
+      // convert 16x8bit integers to 8x16bit integers
+      uint16_t *data_to_unsplit = deUnicoded_data;
+      uint16_t desplitted_data[bit_groups];
+      unSplitBuffer(data_to_unsplit, desplitted_data, bit_groups);
+
+      // decrypt 8x16bit integers to 8x16bit integers
       uint16_t *data_to_decrypt = deUnicoded_data;  // copy of received data
       uint16_t decrypted_data[bit_groups];  // empty array for decrypted message
       decryptData(data_to_decrypt, decrypted_data);  // decrypting message
@@ -349,6 +355,24 @@ void deUnicodeData(char *data_to_deUnicode, uint16_t *deUnicoded_data) {
 }
 
 
+void unSplitBuffer(uint16_t *data_to_desplit, uint16_t *desplitted_data, const int desplitted_data_length) {
+  debugPrint("Desplitting data : [");
+  printIntArray(data_to_desplit, bit_groups*2);
+  debugPrintLn("]");
+
+  for(int i=0; i<desplitted_data_length; i++) {
+    uint8_t part_1 = data_to_desplit[2*i];
+    uint8_t part_2 = data_to_desplit[2*i+1];
+    uint16_t element = (part_1 << (desplitted_data_length)) + part_2;
+    desplitted_data[i] = element;
+  }
+
+  debugPrint("Desplitted data : [");
+  printIntArray(desplitted_data, bit_groups);
+  debugPrintLn("]");
+}
+
+
 void decryptData(uint16_t *data_to_decrypt, uint16_t *decrypted_data) {
   debugPrint("Decrypting data : [");
   printIntArray(data_to_decrypt, bit_groups);
@@ -405,8 +429,6 @@ void deshiftData(uint16_t *shifted_data, const int shifted_data_length, uint16_t
 }
 
 
-
-
 void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
   debugPrintLn("Adding data to buffer");
 
@@ -424,6 +446,7 @@ void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, con
   debugPrintLn("Buffer filled with data");
   is_buffer_empty = false;
 }
+
 
 void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
 
@@ -458,7 +481,6 @@ void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &bu
 
   resetMeasurementBuffer(buffer, buffer_length, buffer_index, is_buffer_empty);
   is_buffer_empty = true;
-
 }
 
 void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
@@ -468,7 +490,6 @@ void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buff
   buffer_index = 0;
   is_buffer_empty = true;
 }
-
 
 
 void printIntArray(uint16_t *array, const int size_of_array) {
@@ -486,11 +507,13 @@ void printArray(char *array) {
   }
 }
 
+
 void debugPrintLn(String str) {
   if (DEBUG) {
     Serial.println(str);
   }
 }
+
 
 void debugPrint(String str) {
   if (DEBUG) {
