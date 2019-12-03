@@ -9,7 +9,7 @@ unsigned int measurement_1_buffer[measurement_1_buffer_length];
 bool is_buffer_1_empty;
 
 const int measurement_1_shifted_buffer_length = 8; //bits_per_encryption / bits_per_int
-unsigned int measurement_1_shifted_buffer[measurement_1_shifted_buffer_length];
+uint16_t measurement_1_shifted_buffer[measurement_1_shifted_buffer_length];
 
 
 
@@ -26,17 +26,17 @@ void setup() {
 
 void loop() {
   fillBufferWithTestData(measurement_1_shifted_buffer, measurement_1_shifted_buffer_length);
-  printBuffer(measurement_1_shifted_buffer, measurement_1_shifted_buffer_length);
+  printBuffer16(measurement_1_shifted_buffer, measurement_1_shifted_buffer_length);
 
-  unsigned int splitted_buffer[16];
+  uint8_t splitted_buffer[16];
   splitBuffer(measurement_1_shifted_buffer, measurement_1_shifted_buffer_length, splitted_buffer);
-  printBuffer(splitted_buffer, 16);
+  printBuffer8(splitted_buffer, 16);
 
-  unsigned int unsplitted_buffer[8];
+  uint16_t unsplitted_buffer[8];
   unSplitBuffer(splitted_buffer, measurement_1_shifted_buffer_length*2, unsplitted_buffer);
-  printBuffer(unsplitted_buffer, measurement_1_shifted_buffer_length);
+  printBuffer16(unsplitted_buffer, measurement_1_shifted_buffer_length);
 
-  
+  /*
   String converted = intToUnicode(measurement_1_shifted_buffer, measurement_1_shifted_buffer_length);
   Serial.println(converted);
   
@@ -44,7 +44,7 @@ void loop() {
   unsigned int measurement_1_shifted_buffer[measurement_1_shifted_buffer_length];
   unicodeToInt(converted, measurement_1_shifted_buffer, measurement_1_shifted_buffer_length);
   printBuffer(measurement_1_shifted_buffer, 8);
-
+  */
   /*
   char chars[5];
   GetUnicodeChar(32767, chars);
@@ -90,11 +90,19 @@ void unicodeToInt(String unicode_string, unsigned int *measurement_buffer, int b
 }
 
 
-void fillBufferWithTestData(unsigned int *measurement_buffer, int buffer_length) {
+void fillBufferWithTestData(uint16_t *measurement_buffer, int buffer_length) {
   for(uint16_t i=0; i<buffer_length; i++) {
     measurement_buffer[i] = i+125;
   }
-  
+
+  measurement_buffer[0] = 0;
+  measurement_buffer[1] = 1026;
+  measurement_buffer[2] = 48;
+  measurement_buffer[3] = 4101;
+  measurement_buffer[4] = 96;
+  measurement_buffer[5] = 7176;
+  measurement_buffer[6] = 144;
+  measurement_buffer[7] = 10251; 
 }
 
 void fillBufferWithZeros(unsigned int *measurement_buffer, int buffer_length) {
@@ -104,7 +112,7 @@ void fillBufferWithZeros(unsigned int *measurement_buffer, int buffer_length) {
 }
 
 
-void printBuffer(unsigned int *measurement_buffer, int buffer_length) {
+void printBuffer8(uint8_t *measurement_buffer, int buffer_length) {
   Serial.print("[ ");
   for(int i=0; i<buffer_length; i++) {
     Serial.print(measurement_buffer[i]);
@@ -113,7 +121,16 @@ void printBuffer(unsigned int *measurement_buffer, int buffer_length) {
   Serial.println(" ]");
 }
 
-void splitBuffer(unsigned int *before_buffer, int before_buffer_length, unsigned int *after_buffer) {
+void printBuffer16(uint16_t *measurement_buffer, int buffer_length) {
+  Serial.print("[ ");
+  for(int i=0; i<buffer_length; i++) {
+    Serial.print(measurement_buffer[i]);
+    Serial.print(", ");
+  }
+  Serial.println(" ]");
+}
+
+void splitBuffer(uint16_t *before_buffer, int before_buffer_length, uint8_t *after_buffer) {
   for(int i=0; i<before_buffer_length; i++) {
     int element = before_buffer[i];
     uint8_t part_1 = element >> (before_buffer_length/2);
@@ -123,7 +140,7 @@ void splitBuffer(unsigned int *before_buffer, int before_buffer_length, unsigned
   }
 }
 
-void unSplitBuffer(unsigned int *before_buffer, int before_buffer_length, unsigned int *after_buffer) {
+void unSplitBuffer(uint8_t *before_buffer, int before_buffer_length, uint16_t *after_buffer) {
   for(int i=0; i<before_buffer_length/2; i++) {
     uint8_t part_1 = before_buffer[2*i];
     uint8_t part_2 = before_buffer[2*i+1];

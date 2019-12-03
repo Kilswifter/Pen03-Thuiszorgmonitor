@@ -11,9 +11,8 @@
 #include <ESP8266WiFi.h>        // Include the Wi-Fi library
 #include "uMQTTBroker.h"        // Include MQTT broker library
 
-// declarations
-#define MAX_CLIENTS 3
-#define MAX_LINE_LENGTH 16
+// pin declarations
+#define LED_BUILTIN_PIN 2           // buildin led pin
 
 // changeable parameters
 bool DEBUG = true;
@@ -23,13 +22,6 @@ const int bits_per_encryption = 128;
 const int bit_groups = bits_per_encryption / bits_per_int; // 8
 const int measurement_groups = 12;
 
-// configure WiFi server
-WiFiServer server(1883);
-WiFiClient *clients[MAX_CLIENTS] = { NULL };
-uint8_t inputs[MAX_CLIENTS][MAX_LINE_LENGTH] = { 0 };
-int topics[MAX_CLIENTS] = { -1 };
-uint16_t buffer_index[MAX_CLIENTS] = { 0 } ;
-
 // wifi AP config
 char ssid[] = "ESP_reciever_1";
 char pass[] = "123456789";
@@ -38,26 +30,17 @@ bool WiFiAP = true;
 // functions pre-declarations
 void startWiFiClient();
 void startWiFiAP();
-
 void receiveSerial();
 void actOnNewSerialData();
-
-void checkForNewConnections();
-void checkForNewMessages();
-void actOnMessage(uint16_t identifier, uint8_t *message_buffer);
-
+void printIntArray(uint16_t *array, const int size_of_array);
+void printArray(char *array);
 void deUnicodeData(char *data_to_deUnicode, uint16_t *deUnicoded_data);
-void deSplitData(uint8_t *data_to_desplit, uint16_t *desplitted_data, const int desplitted_data_length);
-void decryptData(uint8_t *data_to_decrypt, uint8_t *decrypted_data);
+void unSplitBuffer(uint16_t *before_buffer, uint16_t *after_buffer, const int after_buffer_length);
+void decryptData(uint16_t *data_to_decrypt, uint16_t *decrypted_data);
 void deshiftData(uint16_t *shifted_buffer, const int shifted_buffer_length, uint16_t *deshifted_buffer, int deshifted_buffer_length);
-
 void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
 void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
 void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
-
-void printIntArray(uint16_t *array, const int size_of_array);
-void printInt8Array(uint8_t *array, const int size_of_array);
-void printArray(char *array);
 void debugPrintLn(String str);
 void debugPrint(String str);
 
@@ -120,14 +103,94 @@ boolean serial_new_data = false;           // bool to check if message is comple
 bool send_live_data = false;
 
 
+// mqtt broker class
+class myMQTTBroker: public uMQTTBroker
+{
+public:
+    virtual bool onConnect(IPAddress addr, uint16_t client_count) {
+      debugPrintLn(addr.toString() + " connected");
+      return true;
+    }
 
+    /*
+    virtual bool onAuth(String username, String password) {  // not used
+      debugPrintLn("Username/Password: " + username + "/" + password);
+      return true;
+    }
+    */
 
+    virtual void onData(String topic, const char *data, uint32_t length) {
+      // topic = onderwerp van mqtt bericht
+      // data = bericht, ingelezen als een char buffer
+      // length = lengte van bericht
 
+      //scanf
+      /*
+      for (int i=0; i<length; i++) {
+        Serial.println((int)data[i]);
+      }
+      */
 
+      // converteren van bericht
+      char data_str[length+1];
+      os_memcpy(data_str, data, length);
+      data_str[length] = '\0';  // final received message
 
+      debugPrintLn("Received topic '" + topic + "' with data '" + (String)data_str + "'");
 
+      if (send_live_data == true) {
+        Serial.println((String)data_str);
+      }
 
+      if (topic == "test") {
+        Serial.println(data_str);
+      }
 
+      int n_index;
+      // 1
+      if (topic == "ECG") {
+        debugPrintLn("ECG received");
+        n_index = 0;
+      }
+      // 2
+      if (topic == "PPG") {
+        debugPrintLn("ECG received");
+        n_index = 1;
+      }
+
+      // setting variables according to topic
+      uint16_t *measurement_buffer = measurement_n_buffer[n_index];
+      int measurement_buffer_length = measurement_n_buffer_length[n_index];
+      int measurement_buffer_index = measurement_n_buffer_index[n_index];
+      bool is_buffer_empty = is_buffer_n_empty[n_index];
+
+      // convert Unicode string to 16x8bit integers
+      char *data_to_deUnicode = data_str;
+      uint16_t deUnicoded_data[bit_groups*2];
+      deUnicodeData(data_to_deUnicode, deUnicoded_data);
+
+      // convert 16x8bit integers to 8x16bit integers
+      uint16_t *data_to_unsplit = deUnicoded_data;
+      uint16_t desplitted_data[bit_groups];
+      unSplitBuffer(data_to_unsplit, desplitted_data, bit_groups);
+
+      // decrypt 8x16bit integers to 8x16bit integers
+      uint16_t *data_to_decrypt = desplitted_data;  // copy of received data
+      uint16_t decrypted_data[bit_groups];  // empty array for decrypted message
+      decryptData(data_to_decrypt, decrypted_data);  // decrypting message
+
+      // deshift 8x16bit integers to 12x16(10)bit integers
+      uint16_t *data_to_deshift = decrypted_data;
+      uint16_t deshifted_data[measurement_groups]; // empty array for deshifted message
+      deshiftData(data_to_deshift, bit_groups, deshifted_data, measurement_groups);
+
+      // put data in its buffer for later use
+      addDataToBuffer(deshifted_data, measurement_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
+      debugPrintLn("");
+    }
+};
+
+myMQTTBroker myBroker;
 
 
 void setup()
@@ -140,11 +203,11 @@ void setup()
 
   // Start WiFi AP
   debugPrintLn("Starting network connection");
-  startWiFiAP();
-
-  // Start Wifi Server
-  server.begin();
-  Serial.println("Server started");
+  if (WiFiAP) {
+    startWiFiAP();
+  } else {
+    startWiFiClient();
+  }
 
   // filling buffers with zeros
   for (int i=0; i<sensor_count; i++) {
@@ -153,14 +216,20 @@ void setup()
                            measurement_n_buffer_index[i],
                            is_buffer_n_empty[i]);
   }
+
+  // Start the broker
+  debugPrintLn("Starting MQTT broker");
+  myBroker.init();
+
+  // subscribe to all topics
+  myBroker.subscribe("#");
 }
 
 
 
 void loop()
 {
-  checkForNewConnections();
-  checkForNewMessages();
+
   //myBroker.publish("broker/counter", (String)counter++);
   receiveSerial(); // schijf binnekomend bericht naar buffer
   actOnNewSerialData(); // interpreteer en reageer
@@ -170,7 +239,7 @@ void loop()
   }
 
 
-  delay(100);
+  delay(1000);
 }
 
 
@@ -182,6 +251,7 @@ void loop()
 
 ################################################################################
 **/
+
 
 
 void startWiFiClient()
@@ -254,6 +324,10 @@ void actOnNewSerialData() {
       //serial_received_request[current_index] = part_of_message;
       debugPrintLn(part_of_message);
 
+      if (String(part_of_message) == "test") {
+        digitalWrite(LED_BUILTIN_PIN, LOW);  //temp test
+      }
+
       if (String(part_of_message) == "REQUESTLIVEDATA") {
         send_live_data = true;
       }
@@ -261,110 +335,13 @@ void actOnNewSerialData() {
       if (String(part_of_message) == "REQUESTBULKDATA") {
 
       }
+
+
+
       current_index ++;
     }
   serial_new_data = false;
   }
-}
-
-void checkForNewConnections() {
-  // Check if a new client has connected
-  WiFiClient newClient = server.available();
-  if (newClient) {
-    debugPrintLn("new client");
-    // Find the first unused space
-    for (int i=0 ; i<MAX_CLIENTS ; ++i) {
-        if (NULL == clients[i]) {
-            clients[i] = new WiFiClient(newClient);
-            break;
-        }
-     }
-  }
-}
-
-void checkForNewMessages() {
-  // Check whether each client has some data
-  for (int l=0 ; l<MAX_CLIENTS ; l++) {
-    // If the client is in use, and has some data...
-    if (NULL != clients[l] && clients[l]->available() ) {
-
-      uint8_t newBit = clients[l]->read();
-
-      if (topics[l] == -1) {
-        debugPrintLn("Topic identifier received : " + (String)newBit);
-        topics[l] = newBit;
-      }
-
-
-
-
-      else {
-        // add to buffer if it still has space
-        if (buffer_index[l] < MAX_LINE_LENGTH) {
-          inputs[l][buffer_index[l]] = newBit;
-          buffer_index[l] = buffer_index[l] + 1;
-        }
-        // when buffer is full
-        else{
-          buffer_index[l] = 0;
-          actOnMessage(topics[l], inputs[l]);
-          topics[l] = -1;
-        }
-      }
-    }
-  }
-}
-
-void actOnMessage(uint16_t identifier, uint8_t *message_buffer) {
-
-  String topic = "";
-  if (identifier == 1) {
-    topic = "ECG";
-  }
-
-  int n_index;
-  // 1
-  if (topic == "ECG") {
-    debugPrintLn("ECG received");
-    n_index = 0;
-  }
-  // 2
-  if (topic == "PPG") {
-    debugPrintLn("ECG received");
-    n_index = 1;
-  }
-
-  debugPrint("Buffer from signal " + topic + " - ");
-  printInt8Array(message_buffer, MAX_LINE_LENGTH);
-  debugPrintLn("");
-
-  // setting variables according to topic
-  uint16_t *measurement_buffer = measurement_n_buffer[n_index];
-  int measurement_buffer_length = measurement_n_buffer_length[n_index];
-  int measurement_buffer_index = measurement_n_buffer_index[n_index];
-  bool is_buffer_empty = is_buffer_n_empty[n_index];
-
-  // decrypt 16x8bit integers to 16x8bit integers
-  //uint8_t *data_to_decrypt = message_buffer;  // copy of received data
-  //uint8_t decrypted_data[bit_groups*2];  // empty array for decrypted message
-  //decryptData(data_to_decrypt, decrypted_data);  // decrypting message
-
-  // convert 16x8bit integers to 8x16bit integers
-  uint8_t *data_to_desplit = message_buffer; // decrypted_data;
-  uint16_t desplitted_data[bit_groups];
-  deSplitData(data_to_desplit, desplitted_data, bit_groups);
-
-  // deshift 8x16bit integers to 12x16(10)bit integers
-  uint16_t *data_to_deshift = desplitted_data;
-  uint16_t deshifted_data[measurement_groups]; // empty array for deshifted message
-  for (int t=0; t<12; t++) {
-    deshifted_data[t] = 0;
-  }
-  deshiftData(data_to_deshift, bit_groups, deshifted_data, measurement_groups);
-
-  // put data in its buffer for later use
-  addDataToBuffer(deshifted_data, measurement_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
-  debugPrintLn("");
 }
 
 
@@ -384,15 +361,15 @@ void deUnicodeData(char *data_to_deUnicode, uint16_t *deUnicoded_data) {
 }
 
 
-void deSplitData(uint8_t *data_to_desplit, uint16_t *desplitted_data, const int desplitted_data_length) {
+void unSplitBuffer(uint16_t *data_to_desplit, uint16_t *desplitted_data, const int desplitted_data_length) {
   debugPrint("Desplitting data : [");
-  printInt8Array(data_to_desplit, bit_groups*2);
+  printIntArray(data_to_desplit, bit_groups*2);
   debugPrintLn("]");
 
   for(int i=0; i<desplitted_data_length; i++) {
     uint8_t part_1 = data_to_desplit[2*i];
     uint8_t part_2 = data_to_desplit[2*i+1];
-    uint16_t element = (part_1 << (8)) + part_2;
+    uint16_t element = (part_1 << (desplitted_data_length)) + part_2;
     desplitted_data[i] = element;
   }
 
@@ -402,15 +379,17 @@ void deSplitData(uint8_t *data_to_desplit, uint16_t *desplitted_data, const int 
 }
 
 
-void decryptData(uint8_t *data_to_decrypt, uint8_t *decrypted_data) {
+void decryptData(uint16_t *data_to_decrypt, uint16_t *decrypted_data) {
   debugPrint("Decrypting data : [");
-  printInt8Array(data_to_decrypt, bit_groups*2);
+  printIntArray(data_to_decrypt, bit_groups);
   debugPrintLn("]");
 
-  decrypted_data = data_to_decrypt;
+  for (int i=0; i<8; i++) {
+    decrypted_data[i] = i;
+  }
 
   debugPrint("Decrypted data : [");
-  printInt8Array(decrypted_data, bit_groups*2);
+  printIntArray(decrypted_data, bit_groups);
   debugPrintLn("]");
 }
 
@@ -429,18 +408,18 @@ void deshiftData(uint16_t *shifted_data, const int shifted_data_length, uint16_t
         break;
     }
 
-    uint16_t new_element_to_shift = shifted_data[current_shifted_buffer_index];
+    int new_element_to_shift = shifted_data[current_shifted_buffer_index];
 
     if (current_bits_to_shift >= bits_per_int) {
         current_bits_to_shift = bits_per_int - bits_per_measurement;
     } else {
-        uint16_t current_buffer_element = deshifted_data[current_buffer_index];
-        uint16_t bits_to_stay = uint16_t(new_element_to_shift << (current_bits_to_shift)) >> (bits_per_int - bits_per_measurement);
+        int current_buffer_element = deshifted_data[current_buffer_index];
+        int bits_to_stay = uint16_t(new_element_to_shift << (current_bits_to_shift)) >> (bits_per_int - bits_per_measurement);
         current_buffer_element = current_buffer_element + bits_to_stay;
         deshifted_data[current_buffer_index] = current_buffer_element;
 
 
-        uint16_t bits_to_shift = uint16_t(new_element_to_shift >> (bits_per_int - current_bits_to_shift));
+        int bits_to_shift = uint16_t(new_element_to_shift >> (bits_per_int - current_bits_to_shift));
         deshifted_data[current_buffer_index-1] = bits_to_shift;
 
 
@@ -482,16 +461,16 @@ void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &bu
   }
 
   if (topic == "ECG") {
-    Serial.print("E ");
+    Serial.print("E");
   }
   if (topic == "PPG") {
-    Serial.print("P ");
+    Serial.print("P");
   }
   if (topic == "ZWEET") {
-    Serial.print("Z ");
+    Serial.print("Z");
   }
   if (topic == "VOETDRUK") {
-    Serial.print("V ");
+    Serial.print("V");
   }
 
 
@@ -521,14 +500,6 @@ void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buff
 
 
 void printIntArray(uint16_t *array, const int size_of_array) {
-  for(int i = 0; i < size_of_array; i++) {
-    debugPrint((String)array[i]);
-    debugPrint(",");
-  }
-}
-
-
-void printInt8Array(uint8_t *array, const int size_of_array) {
   for(int i = 0; i < size_of_array; i++) {
     debugPrint((String)array[i]);
     debugPrint(",");
