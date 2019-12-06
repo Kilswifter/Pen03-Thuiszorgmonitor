@@ -1,0 +1,34 @@
+
+
+
+
+setup	
+	start de seriële verbinding
+	plaats de ESP8266 in zijn acces point modus
+	start de acces point met een SSID en een wachtwoord
+	
+loop
+	check voor nieuwe potentiële clients die trachten te verbinden
+		voor elke nieuwe client
+			ken de client een verbinding met de server toe
+			slaag de verbinding op
+	voor elk van de verbonden clients 	
+		check voor binnenkomende bytes
+		als nieuwe bytes in buffer
+			lees de eerste byte en interpreteer zijn boodschap
+			als de boodschap een sensor topic is
+				slaag de daarop volgende 16 bytes op in de buffer van de overeenkomstige sensor
+				decrypteer de buffer tot een nieuwe 16 bytes buffer
+				combineer twee opeenvolgende 8 bit bufferelementen tot één 16 bit element en plaats in een nieuwe buffer
+				decomprimeer nieuwe 8 element 16 bit per element buffer tot 12 element 10 bit per element finale buffer
+				voeg de elementen van de finale buffer toe aan de grotere opslagbuffer voor de signalen van de overeenkomstige sensor			
+
+			als de boodschap een opdracht is
+				voer de opdacht uit
+	check voor binnenkomende bits op de seriële verbinding en slaag ze op in een buffer
+	interpreteer de boodschap/opdracht van de bits en voer ze uit
+	
+	voor elke sensorbuffer
+		als buffer niet leeg 
+			stuur de buffer door op de seriële bus
+		
