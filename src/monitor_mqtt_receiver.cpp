@@ -12,11 +12,11 @@
 #include "uMQTTBroker.h"        // Include MQTT broker library
 
 // declarations
-#define MAX_CLIENTS 3
+#define MAX_CLIENTS 10
 #define MAX_LINE_LENGTH 16
 
 // changeable parameters
-bool DEBUG = true;
+bool DEBUG = false;
 const int bits_per_int = 16;
 const int bits_per_measurement = 10;
 const int bits_per_encryption = 128;
@@ -26,6 +26,7 @@ const int measurement_groups = 12;
 // configure WiFi server
 WiFiServer server(1883);
 WiFiClient *clients[MAX_CLIENTS] = { NULL };
+uint8_t client_ids[MAX_CLIENTS] = { 0 };
 uint8_t inputs[MAX_CLIENTS][MAX_LINE_LENGTH] = { 0 };
 int topics[MAX_CLIENTS] = { -1 };
 uint16_t buffer_index[MAX_CLIENTS] = { 0 } ;
@@ -43,6 +44,7 @@ void receiveSerial();
 void actOnNewSerialData();
 
 void checkForNewConnections();
+uint8_t receiveClientId(WiFiClient* client);
 void checkForNewMessages();
 void actOnMessage(uint16_t identifier, uint8_t *message_buffer);
 
@@ -79,30 +81,57 @@ const int measurement_3_buffer_length = 128;
 int measurement_3_buffer_index = 0;
 uint16_t measurement_3_buffer[measurement_3_buffer_length];
 bool is_buffer_3_empty = true;
-// 4 = voetdruk
+// 4 = voetdruk 1
 const int measurement_4_buffer_length = 128;
 int measurement_4_buffer_index = 0;
 uint16_t measurement_4_buffer[measurement_4_buffer_length];
 bool is_buffer_4_empty = true;
+// 4 = voetdruk 2
+const int measurement_5_buffer_length = 128;
+int measurement_5_buffer_index = 0;
+uint16_t measurement_5_buffer[measurement_5_buffer_length];
+bool is_buffer_5_empty = true;
+// 4 = voetdruk 3
+const int measurement_6_buffer_length = 128;
+int measurement_6_buffer_index = 0;
+uint16_t measurement_6_buffer[measurement_6_buffer_length];
+bool is_buffer_6_empty = true;
+// 4 = voetdruk 4
+const int measurement_7_buffer_length = 128;
+int measurement_7_buffer_index = 0;
+uint16_t measurement_7_buffer[measurement_7_buffer_length];
+bool is_buffer_7_empty = true;
 
-const int sensor_count = 4;
+const int sensor_count = 7;
 
 int measurement_n_buffer_length[sensor_count] = {measurement_1_buffer_length,
                                                  measurement_2_buffer_length,
                                                  measurement_3_buffer_length,
-                                                 measurement_4_buffer_length};
+                                                 measurement_4_buffer_length,
+                                                 measurement_5_buffer_length,
+                                                 measurement_6_buffer_length,
+                                                 measurement_7_buffer_length};
 uint16_t* measurement_n_buffer[sensor_count] = {measurement_1_buffer,
-                                           measurement_2_buffer,
-                                           measurement_3_buffer,
-                                           measurement_4_buffer};
+                                                measurement_2_buffer,
+                                                measurement_3_buffer,
+                                                measurement_4_buffer,
+                                                measurement_5_buffer,
+                                                measurement_6_buffer,
+                                                measurement_7_buffer};
 int measurement_n_buffer_index[sensor_count] = {measurement_1_buffer_index,
                                                 measurement_2_buffer_index,
                                                 measurement_3_buffer_index,
-                                                measurement_4_buffer_index};
+                                                measurement_4_buffer_index,
+                                                measurement_5_buffer_index,
+                                                measurement_6_buffer_index,
+                                                measurement_7_buffer_index};
 bool is_buffer_n_empty[sensor_count] = {is_buffer_1_empty,
                                         is_buffer_2_empty,
                                         is_buffer_3_empty,
-                                        is_buffer_4_empty};
+                                        is_buffer_4_empty,
+                                        is_buffer_5_empty,
+                                        is_buffer_6_empty,
+                                        is_buffer_7_empty};
 
 
 
@@ -170,7 +199,7 @@ void loop()
   }
 
 
-  delay(100);
+  //delay(1);
 }
 
 
@@ -272,14 +301,49 @@ void checkForNewConnections() {
   WiFiClient newClient = server.available();
   if (newClient) {
     debugPrintLn("new client");
+    // resetting buffers
+    /*
+    for(int client=0; client<MAX_CLIENTS; client++) {
+      for(int r=0; r<MAX_LINE_LENGTH; r++) {
+        inputs[client][r] = 0;
+      }
+      topics[client] = -1;
+    }
+    */
+
+
+    WiFiClient* cl = new WiFiClient(newClient);
+    delay(500);
+    uint8_t client_id = receiveClientId(cl);
+    debugPrintLn("Client id :" + (String)client_id);
     // Find the first unused space
     for (int i=0 ; i<MAX_CLIENTS ; ++i) {
+
+        if (client_id == client_ids[i]) {
+          debugPrintLn("That's no new client!");
+          // reset its buffer
+          for(int r=0; r<MAX_LINE_LENGTH; r++) {
+            inputs[i][r] = 0;
+          }
+          topics[i] = -1;
+
+          clients[i] = cl;
+          break;
+        }
+
         if (NULL == clients[i]) {
-            clients[i] = new WiFiClient(newClient);
+            clients[i] = cl;//new WiFiClient(newClient);
+            client_ids[i] = client_id;
+            topics[i] = -1;
             break;
         }
      }
   }
+}
+
+uint8_t receiveClientId(WiFiClient* client) {
+  uint8_t client_id = client->read();
+  return client_id;
 }
 
 void checkForNewMessages() {
@@ -318,21 +382,30 @@ void checkForNewMessages() {
 void actOnMessage(uint16_t identifier, uint8_t *message_buffer) {
 
   String topic = "";
-  if (identifier == 1) {
+  if (identifier == 0) {
     topic = "ECG";
   }
+  if (identifier == 1) {
+    topic = "PPG";
+  }
+  if (identifier == 2) {
+    topic = "ZWEET";
+  }
+  if (identifier == 3) {
+    topic = "VOET1";
+  }
+  if (identifier == 4) {
+    topic = "VOET2";
+  }
+  if (identifier == 5) {
+    topic = "VOET3";
+  }
+  if (identifier == 6) {
+    topic = "VOET4";
+  }
 
-  int n_index;
-  // 1
-  if (topic == "ECG") {
-    debugPrintLn("ECG received");
-    n_index = 0;
-  }
-  // 2
-  if (topic == "PPG") {
-    debugPrintLn("ECG received");
-    n_index = 1;
-  }
+  int n_index = identifier;
+
 
   debugPrint("Buffer from signal " + topic + " - ");
   printInt8Array(message_buffer, MAX_LINE_LENGTH);
