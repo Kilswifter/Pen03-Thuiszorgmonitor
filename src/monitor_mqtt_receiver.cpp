@@ -53,9 +53,9 @@ void deSplitData(uint8_t *data_to_desplit, uint16_t *desplitted_data, const int 
 void decryptData(uint8_t *data_to_decrypt, uint8_t *decrypted_data);
 void deshiftData(uint16_t *shifted_buffer, const int shifted_buffer_length, uint16_t *deshifted_buffer, int deshifted_buffer_length);
 
-void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
-void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
-void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty);
+void addDataToBuffer(uint8_t buffer_id, uint16_t *deshifted_data);
+void sendBuffer(uint8_t buffer_id);
+void resetMeasurementBuffer(int buffer_id);
 
 void printIntArray(uint16_t *array, const int size_of_array);
 void printInt8Array(uint8_t *array, const int size_of_array);
@@ -66,6 +66,11 @@ void debugPrint(String str);
 
 
 // measurement buffers
+//  0 = EXTRA
+const int measurement_0_buffer_length = 128;
+int measurement_0_buffer_index = 0;
+uint16_t measurement_0_buffer[measurement_0_buffer_length];
+bool is_buffer_0_empty = true;
 //  1 = ECG
 const int measurement_1_buffer_length = 128;
 int measurement_1_buffer_index = 0;
@@ -86,46 +91,50 @@ const int measurement_4_buffer_length = 128;
 int measurement_4_buffer_index = 0;
 uint16_t measurement_4_buffer[measurement_4_buffer_length];
 bool is_buffer_4_empty = true;
-// 4 = voetdruk 2
+// 5 = voetdruk 2
 const int measurement_5_buffer_length = 128;
 int measurement_5_buffer_index = 0;
 uint16_t measurement_5_buffer[measurement_5_buffer_length];
 bool is_buffer_5_empty = true;
-// 4 = voetdruk 3
+// 6 = voetdruk 3
 const int measurement_6_buffer_length = 128;
 int measurement_6_buffer_index = 0;
 uint16_t measurement_6_buffer[measurement_6_buffer_length];
 bool is_buffer_6_empty = true;
-// 4 = voetdruk 4
+// 7 = voetdruk 4
 const int measurement_7_buffer_length = 128;
 int measurement_7_buffer_index = 0;
 uint16_t measurement_7_buffer[measurement_7_buffer_length];
 bool is_buffer_7_empty = true;
 
-const int sensor_count = 7;
+const int sensor_count = 8;
 
-int measurement_n_buffer_length[sensor_count] = {measurement_1_buffer_length,
+int measurement_n_buffer_length[sensor_count] = {measurement_0_buffer_length,
+                                                 measurement_1_buffer_length,
                                                  measurement_2_buffer_length,
                                                  measurement_3_buffer_length,
                                                  measurement_4_buffer_length,
                                                  measurement_5_buffer_length,
                                                  measurement_6_buffer_length,
                                                  measurement_7_buffer_length};
-uint16_t* measurement_n_buffer[sensor_count] = {measurement_1_buffer,
+uint16_t* measurement_n_buffer[sensor_count] = {measurement_0_buffer,
+                                                measurement_1_buffer,
                                                 measurement_2_buffer,
                                                 measurement_3_buffer,
                                                 measurement_4_buffer,
                                                 measurement_5_buffer,
                                                 measurement_6_buffer,
                                                 measurement_7_buffer};
-int measurement_n_buffer_index[sensor_count] = {measurement_1_buffer_index,
+int measurement_n_buffer_index[sensor_count] = {measurement_0_buffer_index,
+                                                measurement_1_buffer_index,
                                                 measurement_2_buffer_index,
                                                 measurement_3_buffer_index,
                                                 measurement_4_buffer_index,
                                                 measurement_5_buffer_index,
                                                 measurement_6_buffer_index,
                                                 measurement_7_buffer_index};
-bool is_buffer_n_empty[sensor_count] = {is_buffer_1_empty,
+bool is_buffer_n_empty[sensor_count] = {is_buffer_0_empty,
+                                        is_buffer_1_empty,
                                         is_buffer_2_empty,
                                         is_buffer_3_empty,
                                         is_buffer_4_empty,
@@ -177,10 +186,7 @@ void setup()
 
   // filling buffers with zeros
   for (int i=0; i<sensor_count; i++) {
-    resetMeasurementBuffer(measurement_n_buffer[i],
-                           measurement_n_buffer_length[i],
-                           measurement_n_buffer_index[i],
-                           is_buffer_n_empty[i]);
+    resetMeasurementBuffer(i);
   }
 }
 
@@ -194,9 +200,18 @@ void loop()
   receiveSerial(); // schijf binnekomend bericht naar buffer
   actOnNewSerialData(); // interpreteer en reageer
 
-  if (send_live_data && is_buffer_1_empty == false) {
-    sendBuffer("ECG", measurement_1_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
+  if (send_live_data) {
+    for (uint8_t sensor_buffer_index=0; sensor_buffer_index<sensor_count; sensor_buffer_index++) {
+      if (is_buffer_n_empty[sensor_buffer_index] == false) {
+        sendBuffer(sensor_buffer_index);
+
+        //resetMeasurementBuffer(measurement_n_buffer[sensor_buffer_index], buffer_length, buffer_index, is_buffer_empty);
+        is_buffer_n_empty[sensor_buffer_index] = true;
+      }
+    }
   }
+
+
 
 
   //delay(1);
@@ -383,24 +398,27 @@ void actOnMessage(uint16_t identifier, uint8_t *message_buffer) {
 
   String topic = "";
   if (identifier == 0) {
-    topic = "ECG";
+    topic = "EXTRA";
   }
   if (identifier == 1) {
-    topic = "PPG";
+    topic = "ECG";
   }
   if (identifier == 2) {
-    topic = "ZWEET";
+    topic = "PPG";
   }
   if (identifier == 3) {
-    topic = "VOET1";
+    topic = "ZWEET";
   }
   if (identifier == 4) {
-    topic = "VOET2";
+    topic = "VOET1";
   }
   if (identifier == 5) {
-    topic = "VOET3";
+    topic = "VOET2";
   }
   if (identifier == 6) {
+    topic = "VOET3";
+  }
+  if (identifier == 7) {
     topic = "VOET4";
   }
 
@@ -436,7 +454,8 @@ void actOnMessage(uint16_t identifier, uint8_t *message_buffer) {
   deshiftData(data_to_deshift, bit_groups, deshifted_data, measurement_groups);
 
   // put data in its buffer for later use
-  addDataToBuffer(deshifted_data, measurement_buffer, measurement_1_buffer_length, measurement_1_buffer_index, is_buffer_1_empty);
+  uint8_t buffer_id = n_index;
+  addDataToBuffer(buffer_id, deshifted_data);
   debugPrintLn("");
 }
 
@@ -529,8 +548,12 @@ void deshiftData(uint16_t *shifted_data, const int shifted_data_length, uint16_t
 }
 
 
-void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
+void addDataToBuffer(uint8_t buffer_id, uint16_t *deshifted_data) {
   debugPrintLn("Adding data to buffer");
+  uint16_t *measurement_buffer = measurement_n_buffer[buffer_id];
+  const int buffer_length = measurement_n_buffer_length[buffer_id];
+  int &buffer_index = measurement_n_buffer_index[buffer_id];
+  bool &is_buffer_empty = is_buffer_n_empty[buffer_id];
 
   // als er niet voldoende plaats over is in buffer
   if ((buffer_length - buffer_index) < measurement_groups) {
@@ -548,31 +571,45 @@ void addDataToBuffer(uint16_t *deshifted_data, uint16_t *measurement_buffer, con
 }
 
 
-void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
+void sendBuffer(uint8_t buffer_id) {
+  uint16_t *measurement_buffer = measurement_n_buffer[buffer_id];
+  int measurement_buffer_length = measurement_n_buffer_length[buffer_id];
+  int measurement_buffer_index = measurement_n_buffer_index[buffer_id];
+  bool is_buffer_empty = is_buffer_n_empty[buffer_id];
 
   if (is_buffer_empty) {
     return;
   }
 
-  if (topic == "ECG") {
-    Serial.print("E ");
+  if (buffer_id == 1) {
+    //Serial.print("E ");
   }
-  if (topic == "PPG") {
+  if (buffer_id == 2) {
     Serial.print("P ");
   }
-  if (topic == "ZWEET") {
+  if (buffer_id == 3) {
     Serial.print("Z ");
   }
-  if (topic == "VOETDRUK") {
-    Serial.print("V ");
+  if (buffer_id == 4) {
+    Serial.print("V1 ");
+  }
+  if (buffer_id == 5) {
+    Serial.print("V2 ");
+  }
+  if (buffer_id == 6) {
+    Serial.print("V3 ");
+  }
+  if (buffer_id == 7) {
+    Serial.print("V4 ");
   }
 
 
-  for(int i = 0; i < buffer_length; i++) {
-    if (buffer[i] != 0) {  // uitgaande dat 0 nooit voorkomt
-      Serial.print(buffer[i]); // Serial.write
-      if (i != buffer_length-1) {
-        Serial.print(" "); // delimiter
+
+  for(int i = 0; i < 1; i++) { //measurement_buffer_length
+    if (measurement_buffer[i] != 0) {  // uitgaande dat 0 nooit voorkomt
+      Serial.print(measurement_buffer[i]); // Serial.write
+      if (i != measurement_buffer_length-1) {
+        Serial.print("\n"); // delimiter
       }
 
     }
@@ -580,16 +617,17 @@ void sendBuffer(String topic, uint16_t *buffer, const int buffer_length, int &bu
   Serial.print("\n");
   debugPrintLn("");
 
-  resetMeasurementBuffer(buffer, buffer_length, buffer_index, is_buffer_empty);
-  is_buffer_empty = true;
+  resetMeasurementBuffer(buffer_id);
 }
 
-void resetMeasurementBuffer(uint16_t *buffer, const int buffer_length, int &buffer_index, bool &is_buffer_empty) {
-  for(int i = 0; i < buffer_length; i++) {
-    buffer[i] = 0;
+void resetMeasurementBuffer(int buffer_id) {
+  uint16_t *measurement_buffer = measurement_n_buffer[buffer_id];
+  for(int i = 0; i < measurement_n_buffer_length[buffer_id]; i++) {
+    measurement_buffer[i] = 0;
   }
-  buffer_index = 0;
-  is_buffer_empty = true;
+  measurement_n_buffer[buffer_id] = measurement_buffer;
+  measurement_n_buffer_index[buffer_id] = 0;
+  is_buffer_n_empty[buffer_id] = true;
 }
 
 
