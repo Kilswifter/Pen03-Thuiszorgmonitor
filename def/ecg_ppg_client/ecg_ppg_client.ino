@@ -1,4 +1,16 @@
 #include <ESP8266WiFi.h>
+#include "AEGIS.h";
+#include "AESround.h";
+#include "decryption.h";
+#include "encryption.h";
+#include "mixColumnsAes.h";
+#include "preparing.h";
+#include "shiftRowsAes.h";
+#include "stateUpdate.h";
+#include "subBytesAes.h";
+#include "tag.h";
+#include "AEGIS.hpp";
+
 /*
 Shifting data : [0,1,2,3,4,5,6,7,8,9,10,11,]
 Shifted data : [0,1026,48,4101,96,7176,144,10251,]
@@ -24,7 +36,7 @@ int IR_pin = 13;
 int interval_nb = 1;
 
 // SAMPLE //
-const float ecg_samplefreq  = 350;
+const float ecg_samplefreq  = 50;
 const float ppg_samplefreq  = 50;
 const int ecg_interval  = round(1e6/ecg_samplefreq);
 unsigned long last_micros;              
@@ -348,10 +360,15 @@ void sendDataBuffer(int topic_id, uint16_t *data_buffer) {
   splitBuffer(data_to_split, shifted_buffer_length, splitted_data);
   
   uint8_t *data_to_encrypt = splitted_data;
+  uint8_t data_to_send[shifted_buffer_length*2];
+  uint8_t encryption_tag[shifted_buffer_length*2];
   printInt8Array(data_to_encrypt, 16);
+  encryptData(data_to_encrypt, data_to_send, encryption_tag);
   
   client.write(topic_id+1);
-  client.write(data_to_encrypt, 17);
+  //client.write(data_to_encrypt, 17);
+  client.write(data_to_send, 17);
+  client.write(encryption_tag, 17);
 }
 
 
@@ -472,7 +489,7 @@ void splitBuffer(uint16_t *before_buffer, uint8_t before_buffer_length, uint8_t 
 }
 
 
-void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data) {
+void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data, uint8_t *encryption_tag) {
   debugPrint("Ecrypting data : [");
   printInt8Array(data_to_encrypt, shifted_buffer_length*2);
   debugPrintLn("]");
@@ -482,6 +499,13 @@ void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data) {
   debugPrint("Encrypted data : [");
   printInt8Array(encrypted_data, shifted_buffer_length*2);
   debugPrintLn("]");
+
+  preparing(Key, IV, const0, const1);
+  encryption(plaintext, S0, S1, S2, S3, S4);
+  createTag(S0, S1, S2, S3, S4, msglen, adlen);
+
+  add_data_to_buffer(cipherTextBlocksend, encrypted_data, shifted_buffer_length*2);
+  add_data_to_buffer(tagsend, encryption_tag, shifted_buffer_length*2);
 }
 
 
@@ -524,4 +548,11 @@ void debugPrint(String str) {
   if (DEBUG) {
     Serial.print(str);
   }
+}
+
+void add_data_to_buffer(int buffer_1[16], uint8_t *buffer_2, uint8_t buffer_length){
+
+   for (int i=0; i<buffer_length; i++){
+    buffer_2[i] = (uint8_t)buffer_1[i];
+   }
 }
