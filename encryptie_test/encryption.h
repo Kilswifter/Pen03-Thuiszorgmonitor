@@ -28,6 +28,14 @@ void encryptBlock(int S0[4][4], int S1[4][4], int S2[4][4], int S3[4][4], int S4
     
     stateUpdate(S0, S1, S2, S3, S4,M);
 
+    int r=0;
+    for (int i=0; i<4; i++){
+      for (int j=0; j<4; j++){
+        cipherTextBlocksend[r] = cipherTextBlock[i][j];
+        r += 1;
+      }
+    }
+
     setToZero(M);
 }
 

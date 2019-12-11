@@ -1,7 +1,7 @@
 #include <ESP8266WiFi.h>
-/*#include "AEGIS.h";
+#include "AEGIS.h";
 #include "AESround.h";
-//#include "decryption.h";
+#include "decryption.h";
 #include "encryption.h";
 #include "mixColumnsAes.h";
 #include "preparing.h";
@@ -10,7 +10,7 @@
 #include "subBytesAes.h";
 #include "tag.h";
 #include "AEGIS.hpp";
-*/
+
 /*
 Shifting data : [0,1,2,3,4,5,6,7,8,9,10,11,]
 Shifted data : [0,1026,48,4101,96,7176,144,10251,]
@@ -107,7 +107,7 @@ void sendDataBuffer(int topic_id, uint16_t *data_buffer) {
   uint8_t *data_to_encrypt = splitted_data;
   uint8_t data_to_send[shifted_buffer_length*2];
   uint8_t encryption_tag[shifted_buffer_length*2];
-  //encryptData(data_to_encrypt, data_to_send, encryption_tag);
+  encryptData(data_to_encrypt, data_to_send, encryption_tag);
 }
 
 
@@ -180,19 +180,25 @@ void splitBuffer(uint16_t *before_buffer, uint8_t before_buffer_length, uint8_t 
 }
 
 
-/*void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data, uint8_t *encryption_tag) {
+void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data, uint8_t *encryption_tag) {
   debugPrint("Ecrypting data : [");
   printInt8Array(data_to_encrypt, shifted_buffer_length*2);
   debugPrintLn("]");
 
   int plaintext[shifted_buffer_length*2];
-  
   add_data_to_int_buffer(data_to_encrypt, plaintext, shifted_buffer_length*2);
 
-  preparing(Key, IV, const0, const1);
-  encryption(plaintext, S0, S1, S2, S3, S4);
+  //encryption
+  int time_start = micros();
+  preparing(Key, IV, const0, const1);  // 3730 us
+  //int time_start = micros();
+  encryption(plaintext, S0, S1, S2, S3, S4); // 461 us
+  //int time_start = micros();
   createTag(S0, S1, S2, S3, S4, msglen, adlen);
-
+  int time_end = micros();
+  int encryption_time = time_end - time_start;
+  Serial.println(encryption_time);
+  
   add_data_to_uint8_t_buffer(cipherTextBlocksend, encrypted_data, shifted_buffer_length*2);
   add_data_to_uint8_t_buffer(tagsend, encryption_tag, shifted_buffer_length*2);
 
@@ -203,12 +209,23 @@ void splitBuffer(uint16_t *before_buffer, uint8_t before_buffer_length, uint8_t 
   debugPrint("encryption tag : [");
   printInt8Array(encryption_tag, shifted_buffer_length*2);
   debugPrintLn("]");
+
+  // decryption
+  //preparing(Key, IV, const0, const1);
+  //decryption(cipherTextBlock, S0, S1, S2, S3, S4);
+  //createTag(S0, S1, S2, S3, S4, msglen, adlen);
 }
-*/
 
 void fillBufferWithTestData(uint16_t *measurement_buffer, uint8_t buffer_length) {
   for(uint16_t i=0; i<buffer_length; i++) {
     measurement_buffer[i] = i;
+  }
+}
+
+void printInt32Array(int *array, const int size_of_array) {
+  for(int i = 0; i < size_of_array; i++) {
+    debugPrint((String)array[i]);
+    debugPrint(",");
   }
 }
 
