@@ -1,8 +1,5 @@
 #include "AEGIS.hpp"
 
-#include <iostream>
-using namespace std;
-
 //  g++ subBytesAes.cpp shiftRowsAes.cpp mixColumnsAes.cpp AESround.cpp -o AESround
 //  ./AESround
 

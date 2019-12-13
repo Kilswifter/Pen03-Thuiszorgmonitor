@@ -1,6 +1,4 @@
 #include "AEGIS.hpp"
-#include <iostream>
-using namespace std;
 
 //  g++ stateUpdate.cpp AESround.cpp subBytesAes.cpp shiftRowsAes.cpp mixColumnsAes.cpp -o stateUpdate
 //  ./stateUpdate

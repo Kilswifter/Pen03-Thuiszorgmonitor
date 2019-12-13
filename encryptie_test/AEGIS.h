@@ -103,7 +103,7 @@ unsigned char lowerByte;
 unsigned char upperByte;
 int indexPlaintextConverter[1] = {0};
 int cipherTextBlock[4][4];
-int cipherTextBlocksend[16];
+uint8_t cipherTextBlocksend[16];
 
 // AND functie
 int ANDresult[4][4];
@@ -113,7 +113,7 @@ unsigned long long int msglen = 16;  // in byte(s)!
 unsigned long long int adlen = 0;    // in byte(s)!
 int temp[4][4];
 int tag[4][4];
-int tagsend[16];
+uint8_t tagsend[16];
 
 // vul deze variabelen rij per rij in en niet kolom per kolom!
 int Key[4][4] = {             {0x3a, 0x8f, 0x11, 0xcf},

@@ -1,8 +1,4 @@
 #include "AEGIS.hpp"
-#include <iostream>
-using namespace std;
-#include <chrono> 
-using namespace std::chrono;
 
 // all variables concerning AESround
 int Z[4][4];
@@ -107,7 +103,7 @@ unsigned char lowerByte;
 unsigned char upperByte;
 int indexPlaintextConverter[1] = {0};
 int cipherTextBlock[4][4];
-int cipherTextBlocksend[16];
+uint8_t cipherTextBlocksend[16];
 
 // AND functie
 int ANDresult[4][4];
@@ -117,17 +113,7 @@ unsigned long long int msglen = 16;  // in byte(s)!
 unsigned long long int adlen = 0;    // in byte(s)!
 int temp[4][4];
 int tag[4][4];
-int tagsend[16];
-
-void printMatrix(int matrix[4][4]){
-  for(int i = 0; i<4; i++){
-    for(int j = 0; j<4; j++){
-      cout << hex << matrix[i][j] << " " ;
-    }
-    // cout << " " << endl;
-  }
-  cout << endl;
-}
+uint8_t tagsend[16];
 
 // vul deze variabelen rij per rij in en niet kolom per kolom!
 int Key[4][4] = {             {0x3a, 0x8f, 0x11, 0xcf},
@@ -140,11 +126,7 @@ int IV[4][4] =  {             {0xaa, 0xbb, 0x01, 0x01},
                               {0x01, 0x01, 0x01, 0xFF},
                               {0x01, 0xdd, 0x01, 0x70},
                           };
-
-int plaintext[16] = {0x01, 0x33, 0x03, 0x04,0x05, 0x06, 0x07, 0x08, 0x09, 0x10, 0xFF, 0x12, 0x13, 0x14, 0x15, 0x16};
-// g++ AEGIS.cpp subBytesAes.cpp shiftRowsAes.cpp mixColumnsAes.cpp AESround.cpp stateUpdate.cpp preparing.cpp encryption.cpp decryption.cpp tag.cpp -o AEGIS
-// ./AEGIS
-
+/*
 int main(){
 // encryption
 auto start = high_resolution_clock::now();
@@ -168,7 +150,5 @@ createTag(S0, S1, S2, S3, S4, msglen, adlen);
 printMatrix(result);
 cout << endl;
 printMatrix(tag);
-
-
-
 }
+*/

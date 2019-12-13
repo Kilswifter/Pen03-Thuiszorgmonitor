@@ -191,9 +191,7 @@ void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data, uint8_t *enc
   //encryption
   int time_start = micros();
   preparing(Key, IV, const0, const1);  // 3730 us
-  //int time_start = micros();
   encryption(plaintext, S0, S1, S2, S3, S4); // 461 us
-  //int time_start = micros();
   createTag(S0, S1, S2, S3, S4, msglen, adlen);
   int time_end = micros();
   int encryption_time = time_end - time_start;

@@ -1,6 +1,4 @@
 #include "AEGIS.hpp"
-#include <iostream>
-using namespace std;
 
 void preparing(int Key[4][4], int IV[4][4], int const0[4][4], int const1[4][4]){    
     XORMatrix(IV, Key);

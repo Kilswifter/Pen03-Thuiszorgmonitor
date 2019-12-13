@@ -1,6 +1,4 @@
 #include "AEGIS.hpp"
-#include <iostream>
-using namespace std;
 
 void createTag (int S0[4][4], int S1[4][4], int S2[4][4], int S3[4][4], int S4[4][4],unsigned long long int msglen, unsigned long long int adlen){
     maketemp(S3, adlen, msglen, temp);

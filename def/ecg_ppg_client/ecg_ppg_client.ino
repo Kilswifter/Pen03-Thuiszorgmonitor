@@ -15,8 +15,11 @@
 Shifting data : [0,1,2,3,4,5,6,7,8,9,10,11,]
 Shifted data : [0,1026,48,4101,96,7176,144,10251,]
 Splitting data : [0,1026,48,4101,96,7176,144,10251,]
-Splitted data : [0,0,64,2,3,48,0,5,6,96,192,8,9,144,128,11,]
+Splitted data : [0,0,4,2,0,48,16,5,0,96,28,8,0,144,40,11,]
+Encrypted data : [219,224,165,242,160,176,116,58,66,47,194,245,208,206,156,91,]
+encryption tag : [144,50,181,148,141,121,222,115,142,210,47,0,178,161,207,171,]
  */
+ 
 bool DEBUG = true;
 int client_id = 1;
 
@@ -29,14 +32,14 @@ uint16_t PORT = 1883;
 WiFiClient client;
 
 // INPUT/OUTPUT //
-const uint8_t digitalPins[3] = {2,3,4}; // three digital outputs to control multiplexer !!!! numbers are wrong !!!!!
+const uint8_t digitalPins[3] = {4,6}; // 2 digital outputs to control multiplexer !!!! numbers are wrong !!!!!
 const uint8_t input_pin = A0;
 int led_pin = 12;
 int IR_pin = 13;
 int interval_nb = 1;
 
 // SAMPLE //
-const float ecg_samplefreq  = 50;
+const float ecg_samplefreq  = 250;
 const float ppg_samplefreq  = 50;
 const int ecg_interval  = round(1e6/ecg_samplefreq);
 unsigned long last_micros;              
@@ -76,8 +79,6 @@ bool send_live_data = true;
 bool FIXEDSENSOR = false;
 int FIXEDSENSORID = 0;
 bool NORMALMODE = true;
-
-
 
 
 void setup_wifi() {
@@ -362,7 +363,6 @@ void sendDataBuffer(int topic_id, uint16_t *data_buffer) {
   uint8_t *data_to_encrypt = splitted_data;
   uint8_t data_to_send[shifted_buffer_length*2];
   uint8_t encryption_tag[shifted_buffer_length*2];
-  printInt8Array(data_to_encrypt, 16);
   encryptData(data_to_encrypt, data_to_send, encryption_tag);
   
   client.write(topic_id+1);
@@ -421,54 +421,6 @@ void bitShift(uint16_t *measurement_buffer, uint8_t buffer_length, uint16_t *shi
   debugPrintLn("]");
 }
 
-/*
-
-void bitShift(uint16_t *measurement_buffer, uint8_t buffer_length, uint16_t *shifted_buffer, uint8_t shifted_buffer_length) {
-  debugPrint("Shifting data : [");
-  printInt16Array(measurement_buffer, buffer_length);
-  debugPrintLn("]");
-  
-  uint8_t current_buffer_index = buffer_length - 2;
-  uint8_t current_shifted_buffer_index = shifted_buffer_length - 2;
-  //print(measurement_buffer[current_buffer_index])
-  shifted_buffer[current_shifted_buffer_index+1] = measurement_buffer[current_buffer_index+1];
-  uint16_t current_bits_to_shift = bits_per_int - bits_per_measurement;
-  
-  while (true) {
-    if (current_buffer_index < 0) {
-        break;
-    }
-
-    uint16_t new_element_to_shift = measurement_buffer[current_buffer_index];
-      
-    if (current_bits_to_shift >= bits_per_int) { // als vorige shifted_buffer element volledig leeg is
-      shifted_buffer[current_shifted_buffer_index+1] = new_element_to_shift;
-      current_bits_to_shift = bits_per_int - bits_per_measurement;
-    } else {
-      // als er nog ruimte is om op te vullen door te shiften
-      uint16_t previous_shifted_buffer_element = shifted_buffer[current_shifted_buffer_index+1];
-
-      // vul vorig shifted_buffer element
-      uint16_t bits_to_shift = (uint16_t)(new_element_to_shift << (bits_per_int - current_bits_to_shift));
-      previous_shifted_buffer_element = previous_shifted_buffer_element + bits_to_shift;
-      shifted_buffer[current_shifted_buffer_index+1] = previous_shifted_buffer_element;
-      
-      // plaats overblijvende bits in huidig shifted_buffer element
-      if (current_shifted_buffer_index >= 0) {
-          uint16_t leftover_bits = new_element_to_shift >> current_bits_to_shift;
-          shifted_buffer[current_shifted_buffer_index] = leftover_bits;
-          current_bits_to_shift = current_bits_to_shift + (bits_per_int - bits_per_measurement);
-          current_shifted_buffer_index --;
-      }
-    }
-    current_buffer_index --;
-  }
-
-  debugPrint("Shifted data : [");
-  printInt16Array(shifted_buffer, shifted_buffer_length);
-  debugPrintLn("]");
-}
-*/
 
 void splitBuffer(uint16_t *before_buffer, uint8_t before_buffer_length, uint8_t *after_buffer) {
   debugPrint("Splitting data : [");
@@ -493,19 +445,21 @@ void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data, uint8_t *enc
   debugPrint("Ecrypting data : [");
   printInt8Array(data_to_encrypt, shifted_buffer_length*2);
   debugPrintLn("]");
+
+  preparing(Key, IV, const0, const1);
+  encryption(data_to_encrypt, S0, S1, S2, S3, S4);
+  createTag(S0, S1, S2, S3, S4, msglen, adlen);
   
-  encrypted_data = data_to_encrypt;
+  encrypted_data = cipherTextBlocksend;
+  encryption_tag = tagsend;
 
   debugPrint("Encrypted data : [");
   printInt8Array(encrypted_data, shifted_buffer_length*2);
   debugPrintLn("]");
 
-  preparing(Key, IV, const0, const1);
-  encryption(plaintext, S0, S1, S2, S3, S4);
-  createTag(S0, S1, S2, S3, S4, msglen, adlen);
-
-  add_data_to_buffer(cipherTextBlocksend, encrypted_data, shifted_buffer_length*2);
-  add_data_to_buffer(tagsend, encryption_tag, shifted_buffer_length*2);
+  debugPrint("encryption tag : [");
+  printInt8Array(encryption_tag, shifted_buffer_length*2);
+  debugPrintLn("]");
 }
 
 
@@ -516,24 +470,29 @@ void fillBufferWithTestData(uint16_t *measurement_buffer, uint8_t buffer_length)
 }
 
 void printInt16Array(uint16_t *array, const int size_of_array) {
-  for(int i = 0; i < size_of_array; i++) {
-    debugPrint((String)array[i]);
-    debugPrint(",");
+  if (DEBUG){
+    for(int i = 0; i < size_of_array; i++) {
+      debugPrint((String)array[i]);
+      debugPrint(",");
+    }
   }
 }
 
 void printInt8Array(uint8_t *array, const int size_of_array) {
-  for(int i = 0; i < size_of_array; i++) {
-    debugPrint((String)array[i]);
-    debugPrint(",");
+  if (DEBUG){
+    for(int i = 0; i < size_of_array; i++) {
+      debugPrint((String)array[i]);
+      debugPrint(",");
+    }
   }
 }
 
-
 void printArray(char *array) {
-  int size_of_array = strlen(array);
-  for(int i = 0; i < size_of_array; i++) {
-    debugPrint((String)array[i]);
+  if (DEBUG){
+    int size_of_array = strlen(array);
+    for(int i = 0; i < size_of_array; i++) {
+      debugPrint((String)array[i]);
+    }
   }
 }
 
@@ -548,11 +507,4 @@ void debugPrint(String str) {
   if (DEBUG) {
     Serial.print(str);
   }
-}
-
-void add_data_to_buffer(int buffer_1[16], uint8_t *buffer_2, uint8_t buffer_length){
-
-   for (int i=0; i<buffer_length; i++){
-    buffer_2[i] = (uint8_t)buffer_1[i];
-   }
 }
