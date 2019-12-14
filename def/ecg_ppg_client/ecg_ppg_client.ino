@@ -1,11 +1,26 @@
 #include <ESP8266WiFi.h>
+#include <map>
+#include "AEGIS.h";
+#include "AESround.h";
+#include "decryption.h";
+#include "encryption.h";
+#include "mixColumnsAes.h";
+#include "preparing.h";
+#include "shiftRowsAes.h";
+#include "stateUpdate.h";
+#include "subBytesAes.h";
+#include "tag.h";
+#include "AEGIS.hpp";
+
 /*
 Shifting data : [0,1,2,3,4,5,6,7,8,9,10,11,]
 Shifted data : [0,1026,48,4101,96,7176,144,10251,]
 Splitting data : [0,1026,48,4101,96,7176,144,10251,]
-Splitted data : [0,0,64,2,3,48,0,5,6,96,192,8,9,144,128,11,]
+Splitted data : [0,0,4,2,0,48,16,5,0,96,28,8,0,144,40,11,]
+Encrypted data : [219,224,165,242,160,176,116,58,66,47,194,245,208,206,156,91,]
+encryption tag : [144,50,181,148,141,121,222,115,142,210,47,0,178,161,207,171,]
  */
-bool DEBUG = true;
+
 int client_id = 1;
 
 // WIFI //
@@ -17,37 +32,47 @@ uint16_t PORT = 1883;
 WiFiClient client;
 
 // INPUT/OUTPUT //
-const uint8_t digitalPins[3] = {2,3,4}; // three digital outputs to control multiplexer !!!! numbers are wrong !!!!!
+bool multiplexer_combinations[4][2] = {{0,0},{0,1},{1,0},{1,1}}; 
+const uint8_t multiplexer_pins[2] = {4,5};
 const uint8_t input_pin = A0;
 int led_pin = 12;
 int IR_pin = 13;
 int interval_nb = 1;
 
 // SAMPLE //
-const float ecg_samplefreq  = 350;
-const float ppg_samplefreq  = 50;
-const int ecg_interval  = round(1e6/ecg_samplefreq);
+float ecg_samplefreq  = 250;
+float ppg_samplefreq  = 50;
+float zweet_samplefreq = 10;
+int ecg_interval  = round(1e6/ecg_samplefreq);
 unsigned long last_micros;              
 const uint8_t counter_ppg_max = round(ecg_samplefreq/ppg_samplefreq);
 uint8_t counter_ppg = counter_ppg_max-1;
+const uint8_t counter_zweet_max = round(ecg_samplefreq/zweet_samplefreq);
+uint8_t counter_zweet = counter_zweet_max-1;
 
 uint8_t sample_count_ecg = 0;
 uint8_t sample_count_ppg = 0;
+uint8_t sample_count_zweet = 0;
 uint8_t sample_count_serial = 0;
-uint8_t sample_count_n[3] = {sample_count_ecg, sample_count_ppg, sample_count_serial};
+const int sensor_count = 4;
+uint8_t sample_count_n[sensor_count] = {sample_count_ecg, 
+                                        sample_count_ppg, 
+                                        sample_count_zweet, 
+                                        sample_count_serial};
 
-const uint8_t ecg_pin = 0;
-const uint8_t ppg_pin = 1;
-const uint8_t n_pin[2] = {ecg_pin, ppg_pin};
 
 // BUFFERS //
 const uint8_t buffer_length = 12;
 const uint8_t shifted_buffer_length = 8;
 
 uint16_t ecg_samples[buffer_length] = {0};
-uint16_t ppg_samples[buffer_length];
-uint16_t serial_samples[buffer_length];
-uint16_t *n_samples[3] = {ecg_samples, ppg_samples, serial_samples};
+uint16_t ppg_samples[buffer_length] = {0};
+uint16_t zweet_samples[buffer_length] = {0};
+uint16_t serial_samples[buffer_length] = {0};
+uint16_t *n_samples[sensor_count] = {ecg_samples, 
+                                     ppg_samples, 
+                                     zweet_samples,
+                                     serial_samples};
 
 uint8_t bits_per_encryption = 128;
 uint8_t bits_per_measurement = 10;
@@ -61,11 +86,24 @@ boolean serial_new_data = false;           // bool to check if message is comple
 // RUN VARIABLES //
 bool send_live_data = true;
 
+bool DEBUG = false;
 bool FIXEDSENSOR = false;
 int FIXEDSENSORID = 0;
 bool NORMALMODE = true;
+bool TESTDATA = false;
+bool SINGLEVALUE = false;
+bool PRINTDATA = true;
+bool ENCRYPT = false;
 
-
+std::map<String, bool*> bool_map = {
+    { "DEBUG", &DEBUG },
+    { "FIXEDSENSOR", &FIXEDSENSOR },
+    { "NORMALMODE", &NORMALMODE },
+    { "TESTDATA", &TESTDATA },
+    { "SINGLEVALUE", &SINGLEVALUE },
+    { "PRINTDATA", &PRINTDATA },
+    { "ENCRYPT", &ENCRYPT },
+};
 
 
 void setup_wifi() {
@@ -73,10 +111,9 @@ void setup_wifi() {
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(ssid);
-
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-
+  
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -93,7 +130,6 @@ void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
     Serial.print("Attempting connection...");
-
     if (client.connect(IP, PORT)){
       Serial.println("Connected to server!");
       client.write(client_id);
@@ -109,15 +145,23 @@ void reconnect() {
 
 
 void ICACHE_RAM_ATTR onTimerISR(){
-    timer1_write(12500); // 250 us
+    timer1_write(125000000); // 2.50 s
     interval_nb++;
+    if (interval_nb == 1){
+      digitalWrite(led_pin, LOW); 
+      digitalWrite(IR_pin, HIGH); 
+      }
+    if (interval_nb == 2){
+      digitalWrite(led_pin, HIGH); //LOW
+      digitalWrite(IR_pin, HIGH); // HIGH
+    }
     if (interval_nb == 3){
-      digitalWrite(1, LOW); //LOW
-      digitalWrite(2, HIGH); // HIGH
+      digitalWrite(led_pin, HIGH); // HIGH
+      digitalWrite(IR_pin, LOW); // LOW
     }
     if (interval_nb == 4){
-      digitalWrite(1, HIGH); // HIGH
-      digitalWrite(2, LOW); // LOW
+      digitalWrite(led_pin, HIGH); // HIGH
+      digitalWrite(IR_pin, HIGH); // LOW
       interval_nb = 0;
     }
 }
@@ -134,11 +178,11 @@ void setup() {
 
   // INPUT/OUTPUT //
   pinMode(input_pin, INPUT);
-  for (uint8_t i=0; i<3; i++){
-    pinMode(digitalPins[i+4], OUTPUT);
-    digitalWrite(digitalPins[i+4], LOW);
-  } 
-
+  pinMode(multiplexer_pins[0], OUTPUT);
+  pinMode(multiplexer_pins[1], OUTPUT);
+  digitalWrite(multiplexer_pins[0], LOW);
+  digitalWrite(multiplexer_pins[1], LOW);
+ 
   pinMode(led_pin, OUTPUT);
   digitalWrite(led_pin, HIGH);
   pinMode(IR_pin, OUTPUT);
@@ -147,7 +191,7 @@ void setup() {
   timer1_isr_init(); 
   timer1_attachInterrupt(onTimerISR);
   timer1_enable(TIM_DIV16, TIM_EDGE, TIM_SINGLE); // 5MHZ timer gives 5 ticks per us (80MHz timer divided by 16)
-  timer1_write(12500);                             // number of ticks, 1250 ticks / 5 ticks per us = 250 us
+  timer1_write(125000000);                             // number of ticks, 1250 ticks / 5 ticks per us = 250 us
   
   unsigned long last_micros = micros(); 
 }
@@ -160,38 +204,67 @@ void loop() {
     unsigned long last_micros = micros();
   }
 
-
-
   if (NORMALMODE == true) {
     // SAMPLE //
-    if (micros() - last_micros >= ecg_interval) {
+    unsigned long diff_micros = micros() - last_micros;
+    if (diff_micros >= ecg_interval) {
+       
+      if (diff_micros > 4*ecg_interval) {
+        last_micros = micros();
+      } else { last_micros += ecg_interval; }
+      
+      // ECG sample [0]
+      if (!FIXEDSENSOR or FIXEDSENSORID == 0) {
+        multiplexerSelect(multiplexer_combinations[0]);
+        debugPrint("Sampeling sensor ECG - ");
+        n_samples[0][sample_count_n[0]] = analogRead(input_pin);
+        if (PRINTDATA){Serial.print((String)n_samples[0][sample_count_n[0]] + " ");}
 
-      
-      
-      last_micros += ecg_interval;
-      
-      // ecg sample [0]
-      //Serial.println("ECG: " + (String)sample_count_n[0]);
-      n_samples[0][sample_count_n[0]] = analogRead(input_pin);  
-      Serial.println(n_samples[0][sample_count_n[0]]);
-      sample_count_n[0] = 12;// sample_count_n[0] + 1;
-      
-  
-      // ppg sample [1]
-      counter_ppg++;
-      if (counter_ppg == counter_ppg_max){
-        //Serial.println("PPG: " + (String)sample_count_n[1]);
-        pinSelect(n_pin[1]);
-        n_samples[1][sample_count_n[1]] = analogRead(input_pin);
-        sample_count_n[1] = sample_count_n[1] + 1;
-        counter_ppg = 0;
-  
+        sample_count_n[0] = sample_count_n[0] + 1; //12 voor één waarde
+        if (SINGLEVALUE == true) { sample_count_n[0] = 12; }
       }
-  
+      
+      // PPG sample [1]
+      counter_ppg++;
+      if (!FIXEDSENSOR or FIXEDSENSORID == 1) {
+        if (counter_ppg == counter_ppg_max){
+          multiplexerSelect(multiplexer_combinations[1]);
+          debugPrint("Sampeling sensor PPG - ");
+          n_samples[1][sample_count_n[1]] = analogRead(input_pin);
+          if (PRINTDATA){Serial.print((String)n_samples[1][sample_count_n[1]] + " ");}
+          sample_count_n[1] = sample_count_n[1] + 1;
+          if (SINGLEVALUE == true) { sample_count_n[1] = 12; }
+          counter_ppg = 0;
+        } else { if (PRINTDATA){Serial.print((String)n_samples[1][max(sample_count_n[1]-1, 0)] + " ");}}
+      }
+
+      // ZWEET sample [2]
+      counter_zweet++;
+      if (!FIXEDSENSOR or FIXEDSENSORID == 2) {
+        if (counter_zweet == counter_zweet_max){
+          multiplexerSelect(multiplexer_combinations[2]);
+          debugPrint("Sampeling sensor ZWEET - ");
+          n_samples[2][sample_count_n[2]] = analogRead(input_pin);
+          if (PRINTDATA){Serial.println((String)n_samples[2][sample_count_n[2]] + " ");}
+          sample_count_n[2] = sample_count_n[2] + 1;
+          if (SINGLEVALUE == true) { sample_count_n[2] = 12; }
+          counter_zweet = 0;
+        } else {if (PRINTDATA){Serial.print((String)n_samples[2][max(sample_count_n[2]-1, 0)] + " ");}}
+      }
+      Serial.println("");
+      /*
+      if (PRINTDATA == true) {
+        Serial.print((String)n_samples[0][0]);
+        Serial.print(" ");
+        Serial.print((String)n_samples[1][0]);
+        Serial.print(" ");
+        Serial.println((String)n_samples[2][0]);
+      }
+      */
       
   
       // check if buffers are full 
-      for (int q=0; q<2; q++){
+      for (int q=0; q<sensor_count; q++){
         int n = 0;
         if (FIXEDSENSOR == true) {
           n = FIXEDSENSORID; 
@@ -199,48 +272,16 @@ void loop() {
           n = q;
         }
         
-        uint8_t &sample_count = sample_count_n[n];
-        uint16_t *samples = n_samples[n];
-        //uint16_t *shifted_buffer = shifted_buffer_n[n];
-        //uint8_t *encoded_message = encoded_message_n[n];
         
-        if (sample_count == buffer_length){
-        
-          sample_count = 0;
-  
-          sendDataBuffer(n, samples);
-
-          /*     
-          fillBufferWithTestData(samples, buffer_length);
-          
-          uint16_t *data_to_shift = samples;
-          uint16_t shifted_data[shifted_buffer_length];
-          bitShift(data_to_shift, 12, shifted_data, 8);
-  
-          
-          uint16_t *data_to_split = shifted_data;
-          uint8_t splitted_data[shifted_buffer_length*2];
-          splitBuffer(data_to_split, shifted_buffer_length, splitted_data);
-          
-          uint8_t *data_to_encrypt = splitted_data;
-          //printInt8Array(data_to_encrypt, 16);
-          //uint8_t encrypted_data[shifted_buffer_length*2];
-          //encryptData(data_to_encrypt, encrypted_data);
-          //printInt8Array(encrypted_data, 16);
-  
-  
-          printInt8Array(data_to_encrypt, 16);
-  
-          client.write(n);
-          client.write(data_to_encrypt, 17);
-          */
-
+        if (sample_count_n[n] == buffer_length){
+          sample_count_n[n] = 0;
+          if (TESTDATA == true) { fillBufferWithTestData(n_samples[n], buffer_length); }
+          sendDataBuffer(n, n_samples[n]);
+          n_samples[n][0] = n_samples[n][12];
+          for (int s=1; s<12; s++) { n_samples[n][s] = 0; }
         }
       }
-      
-      
     } 
- 
   }
   receiveSerial();
   actOnNewSerialData();
@@ -287,40 +328,32 @@ void actOnNewSerialData() {
     char *part_of_message;
     int current_index = 0;
     while ((part_of_message = strtok_r(p, "/", &p)) != NULL) {
-      Serial.print("Message : " + (String)part_of_message + " ");
-      debugPrintLn(part_of_message);
-
+      String command = (String)part_of_message;
+      debugPrintLn("Message : " + command + " ");
       // set multiplexer fixed to only one sensor
-      if (String(part_of_message) == "FIXEDSENSORON") {
-        FIXEDSENSOR = true;
-        FIXEDSENSORID = (int)strtok_r(p, "/", &p);
+      if (command == "FIXEDSENSORID") {
+        FIXEDSENSORID = ((String)strtok_r(p, "/", &p)).toInt();
       }
-      if (String(part_of_message) == "FIXEDSENSOROFF") {
-        FIXEDSENSOR = false;
+      if (command == "SAMPLEINTERVAL") {
+        ecg_interval = ((String)strtok_r(p, "/", &p)).toInt();
+      } 
+      if (command == "SAMPLEFREQ") {
+        ecg_interval = round(1e6/(float)((String)strtok_r(p, "/", &p)).toInt());
       }
-      
-      // switch to demonstration mode
-      if (String(part_of_message) == "SETNORMALMODEOFF") {
-        NORMALMODE = false;
-      }
-      if (String(part_of_message) == "SETNORMALMODEON") {
-        NORMALMODE = true;
+      if (bool_map.count(command) > 0) {
+        *bool_map[command] = !*bool_map[command];
       }
 
       if (NORMALMODE == false) {
-        n_samples[2][sample_count_n[2]] = (uint16_t)((String)part_of_message).toInt();  
-        sample_count_n[2] = sample_count_n[2] + 1;
+        n_samples[sensor_count-1][sample_count_n[sensor_count-1]] = (uint16_t)((String)part_of_message).toInt();  
+        sample_count_n[sensor_count-1] = sample_count_n[sensor_count-1] + 1;
 
-        uint8_t &sample_count = sample_count_n[2];
-        uint16_t *samples = n_samples[2];
-
-        if (sample_count == buffer_length) {
-          sample_count_n[2] = 0;
-          sendDataBuffer(0, samples);
+        if (sample_count_n[sensor_count-1] == buffer_length) {
+          sample_count_n[sensor_count-1] = 0;
+          sendDataBuffer(0, n_samples[sensor_count-1]);
         }
       }
 
-      
       current_index ++;
     }
   serial_new_data = false;
@@ -328,12 +361,9 @@ void actOnNewSerialData() {
 }
 
 
-
-void pinSelect(uint8_t sensor_pin){   // pin is a number between 0 and 3
-  for (uint8_t x=0; x<2; x++){
-    byte state = bitRead(sensor_pin, x);    // bitRead reads the bit at position x of the number starting from the right, state can be 0 or 1
-    digitalWrite(digitalPins[x], state);    
-  }
+void multiplexerSelect(bool *combination){   // pin is a number between 0 and 3
+  digitalWrite(multiplexer_pins[0], combination[0]);
+  digitalWrite(multiplexer_pins[1], combination[1]);
 }
 
 
@@ -348,10 +378,29 @@ void sendDataBuffer(int topic_id, uint16_t *data_buffer) {
   splitBuffer(data_to_split, shifted_buffer_length, splitted_data);
   
   uint8_t *data_to_encrypt = splitted_data;
-  printInt8Array(data_to_encrypt, 16);
-  
-  client.write(topic_id+1);
-  client.write(data_to_encrypt, 17);
+
+  if (ENCRYPT == true) {
+    uint8_t data_to_send[shifted_buffer_length*2];
+    uint8_t encryption_tag[shifted_buffer_length*2];
+    debugPrintLn("");
+    printInt8Array(encryption_tag, 16);
+    debugPrintLn("");
+
+    encryptData(data_to_encrypt, data_to_send, encryption_tag);
+
+    
+    debugPrintLn(String(topic_id+1));
+    printInt8Array(data_to_send, 16);
+    debugPrintLn("");
+    printInt8Array(encryption_tag, 16);
+    debugPrintLn("");
+    
+    
+    
+  } else {
+    client.write(topic_id+1);
+    client.write(data_to_encrypt, 17);
+  }
 }
 
 
@@ -404,54 +453,6 @@ void bitShift(uint16_t *measurement_buffer, uint8_t buffer_length, uint16_t *shi
   debugPrintLn("]");
 }
 
-/*
-
-void bitShift(uint16_t *measurement_buffer, uint8_t buffer_length, uint16_t *shifted_buffer, uint8_t shifted_buffer_length) {
-  debugPrint("Shifting data : [");
-  printInt16Array(measurement_buffer, buffer_length);
-  debugPrintLn("]");
-  
-  uint8_t current_buffer_index = buffer_length - 2;
-  uint8_t current_shifted_buffer_index = shifted_buffer_length - 2;
-  //print(measurement_buffer[current_buffer_index])
-  shifted_buffer[current_shifted_buffer_index+1] = measurement_buffer[current_buffer_index+1];
-  uint16_t current_bits_to_shift = bits_per_int - bits_per_measurement;
-  
-  while (true) {
-    if (current_buffer_index < 0) {
-        break;
-    }
-
-    uint16_t new_element_to_shift = measurement_buffer[current_buffer_index];
-      
-    if (current_bits_to_shift >= bits_per_int) { // als vorige shifted_buffer element volledig leeg is
-      shifted_buffer[current_shifted_buffer_index+1] = new_element_to_shift;
-      current_bits_to_shift = bits_per_int - bits_per_measurement;
-    } else {
-      // als er nog ruimte is om op te vullen door te shiften
-      uint16_t previous_shifted_buffer_element = shifted_buffer[current_shifted_buffer_index+1];
-
-      // vul vorig shifted_buffer element
-      uint16_t bits_to_shift = (uint16_t)(new_element_to_shift << (bits_per_int - current_bits_to_shift));
-      previous_shifted_buffer_element = previous_shifted_buffer_element + bits_to_shift;
-      shifted_buffer[current_shifted_buffer_index+1] = previous_shifted_buffer_element;
-      
-      // plaats overblijvende bits in huidig shifted_buffer element
-      if (current_shifted_buffer_index >= 0) {
-          uint16_t leftover_bits = new_element_to_shift >> current_bits_to_shift;
-          shifted_buffer[current_shifted_buffer_index] = leftover_bits;
-          current_bits_to_shift = current_bits_to_shift + (bits_per_int - bits_per_measurement);
-          current_shifted_buffer_index --;
-      }
-    }
-    current_buffer_index --;
-  }
-
-  debugPrint("Shifted data : [");
-  printInt16Array(shifted_buffer, shifted_buffer_length);
-  debugPrintLn("]");
-}
-*/
 
 void splitBuffer(uint16_t *before_buffer, uint8_t before_buffer_length, uint8_t *after_buffer) {
   debugPrint("Splitting data : [");
@@ -472,16 +473,29 @@ void splitBuffer(uint16_t *before_buffer, uint8_t before_buffer_length, uint8_t 
 }
 
 
-void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data) {
+void encryptData(uint8_t *data_to_encrypt, uint8_t *encrypted_data, uint8_t *encryption_tag) {
   debugPrint("Ecrypting data : [");
   printInt8Array(data_to_encrypt, shifted_buffer_length*2);
   debugPrintLn("]");
+
+  preparing(Key, IV, const0, const1);
+  encryption(data_to_encrypt, S0, S1, S2, S3, S4);
+  createTag(S0, S1, S2, S3, S4, msglen, adlen);
   
-  encrypted_data = data_to_encrypt;
+  encrypted_data = cipherTextBlocksend;
+  encryption_tag = tagsend;
 
   debugPrint("Encrypted data : [");
   printInt8Array(encrypted_data, shifted_buffer_length*2);
   debugPrintLn("]");
+
+  debugPrint("Encryption tag : [");
+  printInt8Array(encryption_tag, shifted_buffer_length*2);
+  debugPrintLn("]");
+
+  client.write(0+1);
+  client.write(cipherTextBlocksend, 16);
+  client.write(tagsend, 17);
 }
 
 
@@ -492,24 +506,29 @@ void fillBufferWithTestData(uint16_t *measurement_buffer, uint8_t buffer_length)
 }
 
 void printInt16Array(uint16_t *array, const int size_of_array) {
-  for(int i = 0; i < size_of_array; i++) {
-    debugPrint((String)array[i]);
-    debugPrint(",");
+  if (DEBUG){
+    for(int i = 0; i < size_of_array; i++) {
+      debugPrint((String)array[i]);
+      debugPrint(",");
+    }
   }
 }
 
 void printInt8Array(uint8_t *array, const int size_of_array) {
-  for(int i = 0; i < size_of_array; i++) {
-    debugPrint((String)array[i]);
-    debugPrint(",");
+  if (DEBUG){
+    for(int i = 0; i < size_of_array; i++) {
+      debugPrint((String)array[i]);
+      debugPrint(",");
+    }
   }
 }
 
-
 void printArray(char *array) {
-  int size_of_array = strlen(array);
-  for(int i = 0; i < size_of_array; i++) {
-    debugPrint((String)array[i]);
+  if (DEBUG){
+    int size_of_array = strlen(array);
+    for(int i = 0; i < size_of_array; i++) {
+      debugPrint((String)array[i]);
+    }
   }
 }
 

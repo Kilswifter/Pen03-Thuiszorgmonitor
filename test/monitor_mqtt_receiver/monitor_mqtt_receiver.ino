@@ -11,17 +11,17 @@
 #include <ESP8266WiFi.h>        // Include the Wi-Fi library
 #include "uMQTTBroker.h"        // Include MQTT broker library
 #include <map>
-#include <AEGIS.h>
-#include <AEGIS.hpp>
-#include <AESround.h>
-#include <tag.h>
-#include <decryption.h>
-#include <encryption.h>
-#include <mixColumnsAes.h>
-#include <shiftRowsAes.h>
-#include <preparing.h>
-#include <stateUpdate.h>
-#include <subBytesAes.h>
+#include "AEGIS.h"
+#include "AEGIS.hpp"
+#include "AESround.h"
+#include "tag.h"
+#include "decryption.h"
+#include "encryption.h"
+#include "mixColumnsAes.h"
+#include "shiftRowsAes.h"
+#include "preparing.h"
+#include "stateUpdate.h"
+#include "subBytesAes.h"
 
 // declarations
 #define MAX_CLIENTS 10          // max aantal clients die zonder reboot na elkaar kunnen verbinden (niet persé tegelijk)
@@ -171,7 +171,7 @@ int FIXEDSENSORID = 1;
 bool SINGLEVALUE = false;
 bool SENDLIVEDATA = true;
 bool SENDVISUAL = false;
-bool DECRYPT = false;
+bool DECRYPT = true;
 
 std::map<String, bool*> bool_map = {
     { "DEBUG", &DEBUG },
@@ -417,10 +417,7 @@ void checkForNewMessages() {
 
       else {
         // add to buffer if it still has space
-        uint8_t max_bit_count = MAX_LINE_LENGTH;
-        if (DECRYPT == true) {max_bit_count = max_bit_count*2;}
-
-        if (buffer_index[l] < max_bit_count) {
+        if (buffer_index[l] < MAX_LINE_LENGTH*2) {
           if (buffer_index[l] < MAX_LINE_LENGTH) {
             inputs[l][buffer_index[l]] = newBit;
             buffer_index[l] = buffer_index[l] + 1;
@@ -459,20 +456,13 @@ void actOnMessage(uint16_t identifier, uint8_t *message_buffer, uint8_t *tag_buf
   bool is_buffer_empty = is_buffer_n_empty[n_index];
 
   // decrypt 16x8bit integers to 16x8bit integers
-  uint8_t *decrypted_data;
-  if (DECRYPT == true) {
-    uint8_t *data_to_decrypt = message_buffer;  // copy of received data
-    uint8_t decrypted_data[bit_groups*2];  // empty array for decrypted message
-    decryptData(data_to_decrypt, decrypted_data, tag_buffer);  // decrypting message
-  } else {
-    tag_match = true;
-    decrypted_data = message_buffer;
-  }
-
+  uint8_t *data_to_decrypt = message_buffer;  // copy of received data
+  uint8_t decrypted_data[bit_groups*2];  // empty array for decrypted message
+  decryptData(data_to_decrypt, decrypted_data, tag_buffer);  // decrypting message
 
   if (tag_match == true) {
     // convert 16x8bit integers to 8x16bit integers
-    uint8_t *data_to_desplit = decrypted_data;
+    uint8_t *data_to_desplit = message_buffer; // decrypted_data;
     uint16_t desplitted_data[bit_groups];
     deSplitData(data_to_desplit, desplitted_data, bit_groups);
 
@@ -509,7 +499,7 @@ void deSplitData(uint8_t *data_to_desplit, uint16_t *desplitted_data, const int 
   debugPrintLn("]");
 }
 
-/*
+
 void decryptData(uint8_t *data_to_decrypt, uint8_t *decrypted_data) {
   debugPrint("Decrypting data : [");
   printInt8Array(data_to_decrypt, bit_groups*2);
@@ -521,15 +511,10 @@ void decryptData(uint8_t *data_to_decrypt, uint8_t *decrypted_data) {
   printInt8Array(decrypted_data, bit_groups*2);
   debugPrintLn("]");
 }
-*/
 
 void decryptData(uint8_t *data_to_decrypt, uint8_t *decrypted_data, uint8_t *decryption_tag) {
   debugPrint("Decrypting data : [");
   printInt8Array(data_to_decrypt, bit_groups*2);
-  debugPrintLn("]");
-
-  debugPrint("Decryption tag : [");
-  printInt8Array(decryption_tag, bit_groups*2);
   debugPrintLn("]");
 
   //preparing(Key, IV, const0, const1);
@@ -546,6 +531,9 @@ void decryptData(uint8_t *data_to_decrypt, uint8_t *decrypted_data, uint8_t *dec
     printInt8Array(decrypted_data, bit_groups*2);
     debugPrintLn("]");
 
+    debugPrint("Decryption tag : [");
+    printInt8Array(decrypted_data, bit_groups*2);
+    debugPrintLn("]");
   } else {
     debugPrintLn("Decryption failed!");
   }
