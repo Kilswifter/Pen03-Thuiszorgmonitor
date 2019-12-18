@@ -156,7 +156,7 @@ bool is_buffer_n_empty[sensor_count] = {is_buffer_0_empty,
                                         is_buffer_6_empty,
                                         is_buffer_7_empty};
 
-String topic_list[8] = {"EXTRA", "ECG", "PPG", "ZWEET", "VOET1", "VOET2", "VOET3", "VOET4"};
+String topic_list[8] = {"EXTRA", "EC", "PP", "ZW", "D1", "D2", "D3", "D4"};
 
 // communication buffers
 const byte serial_buffer_length = 32;          // max aantal characters voor binnenkomend bericht
@@ -172,6 +172,7 @@ bool SINGLEVALUE = false;
 bool SENDLIVEDATA = true;
 bool SENDVISUAL = false;
 bool DECRYPT = false;
+bool NORMALMODE = true;
 
 std::map<String, bool*> bool_map = {
     { "DEBUG", &DEBUG },
@@ -180,6 +181,7 @@ std::map<String, bool*> bool_map = {
     { "SENDLIVEDATA", &SENDLIVEDATA },
     { "SENDVISUAL", &SENDVISUAL },
     { "DECRYPT", &DECRYPT },
+    { "NORMALMODE", &NORMALMODE },
 };
 
 
@@ -221,34 +223,36 @@ void setup()
 
 void loop()
 {
+  if (NORMALMODE == true) {
+    checkForNewConnections();   // controleer op nieuwe sensorclients
+    checkForNewMessages();      // controleer op binnenkomende berichten & reageer
+
+    receiveSerial();            // schijf binnekomend seriële bericht naar buffer
+    actOnNewSerialData();       // interpreteer en reageer
+
+    unsigned long diff_micros = micros() - last_micros;
+    if (diff_micros >= loop_interval) {
+      if (diff_micros > 4*loop_interval) {
+        last_micros = micros();
+      } else { last_micros += loop_interval; }
 
 
-  checkForNewConnections();   // controleer op nieuwe sensorclients
-  checkForNewMessages();      // controleer op binnenkomende berichten & reageer
 
-  receiveSerial();            // schijf binnekomend seriële bericht naar buffer
-  actOnNewSerialData();       // interpreteer en reageer
-
-  unsigned long diff_micros = micros() - last_micros;
-  if (diff_micros >= loop_interval) {
-    if (diff_micros > 4*loop_interval) {
-      last_micros = micros();
-    } else { last_micros += loop_interval; }
-
-    // Send data buffers to serial port for Matlab
-    if (SENDLIVEDATA == true) {
-      for (uint8_t sensor_buffer_index=0; sensor_buffer_index<sensor_count; sensor_buffer_index++) {
-        uint8_t q = 0;
-        if (FIXEDSENSOR == true) { q = (uint8_t)FIXEDSENSORID; } else { q = sensor_buffer_index; }
-        if (is_buffer_n_empty[q] == false) {
-          sendBuffer(q);
-          is_buffer_n_empty[q] = true;
+      // Send data buffers to serial port for Matlab
+      if (SENDLIVEDATA == true) {
+        for (uint8_t sensor_buffer_index=0; sensor_buffer_index<sensor_count; sensor_buffer_index++) {
+          uint8_t q = 0;
+          if (FIXEDSENSOR == true) { q = (uint8_t)FIXEDSENSORID; } else { q = sensor_buffer_index; }
+          if (is_buffer_n_empty[q] == false) {
+            sendBuffer(q);
+            is_buffer_n_empty[q] = true;
+          }
         }
       }
-    }
-    if (SENDVISUAL == true) {
-      if (is_buffer_n_empty[1] == false) {
-        sendBufferVisual();
+      if (SENDVISUAL == true) {
+        if (is_buffer_n_empty[1] == false) {
+          sendBufferVisual();
+        }
       }
     }
   }
@@ -300,13 +304,14 @@ void startWiFiAP()
 */
 void receiveSerial() {
   static byte character_index = 0;
-  char end_marker = '\n';
+  char end_marker_1 = '\n';
+  char end_marker_2 = '*';
   char new_character;
 
   if (Serial.available() > 0) {
     while (Serial.available() > 0 && serial_new_data == false) {
       new_character = Serial.read();
-      if (new_character != end_marker) {
+      if (new_character != end_marker_1 and new_character != end_marker_2) {
         serial_buffer[character_index] = new_character;
         character_index++;
         if (character_index >= serial_buffer_length) {  // if buffer is full, last
@@ -459,16 +464,16 @@ void actOnMessage(uint16_t identifier, uint8_t *message_buffer, uint8_t *tag_buf
   bool is_buffer_empty = is_buffer_n_empty[n_index];
 
   // decrypt 16x8bit integers to 16x8bit integers
-  uint8_t *decrypted_data;
+  uint8_t decrypted_data[bit_groups*2]; // empty array for decrypted message
   if (DECRYPT == true) {
     uint8_t *data_to_decrypt = message_buffer;  // copy of received data
-    uint8_t decrypted_data[bit_groups*2];  // empty array for decrypted message
     decryptData(data_to_decrypt, decrypted_data, tag_buffer);  // decrypting message
   } else {
     tag_match = true;
-    decrypted_data = message_buffer;
+    for (int t=0; t<bit_groups*2; t++) {
+      decrypted_data[t] = message_buffer[t];
+    }
   }
-
 
   if (tag_match == true) {
     // convert 16x8bit integers to 8x16bit integers
@@ -536,8 +541,11 @@ void decryptData(uint8_t *data_to_decrypt, uint8_t *decrypted_data, uint8_t *dec
   createTag(S0, S1, S2, S3, S4, msglen, adlen);
   if (checkTag(decryption_tag, tagsend) == true) {
     debugPrintLn("Tags match!");
+    preparing(Key, IV, const0, const1);
     decryption(data_to_decrypt, S0, S1, S2, S3, S4);
-    decrypted_data = resultSend;
+    for (int t=0; t<bit_groups*2; t++) {
+      decrypted_data[t] = resultSend[t];
+    }
     //encryption_tag = tagsend;
 
     tag_match = true;
@@ -625,11 +633,16 @@ void sendBuffer(uint8_t buffer_id) {
     return;
   }
 
-  Serial.print(topic_list[buffer_id]);
-  Serial.print(" ");
+
 
   int max_index = measurement_buffer_length;
-  if (SINGLEVALUE) { max_index = 1; }
+  if (SINGLEVALUE) {
+    max_index = 1;
+  } else {
+    Serial.print(topic_list[buffer_id]);
+    Serial.print(" ");
+  }
+
 
   for(int i = 0; i < max_index; i++) {
     if (measurement_buffer[i] != 0) {
@@ -639,7 +652,7 @@ void sendBuffer(uint8_t buffer_id) {
       }
     }
   }
-  Serial.print("\n");
+  Serial.println("");
   debugPrintLn("");
 
   resetMeasurementBuffer(buffer_id);

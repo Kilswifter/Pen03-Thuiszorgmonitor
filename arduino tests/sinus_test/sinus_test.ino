@@ -51,15 +51,17 @@ void loop() {
       last_micros = micros();
     } else { last_micros += interval; }
 
-    //int pwmval= round(sinetable[counter]*0.75);
+    int pwmval= round(sinetable[counter]*0.75);
+    /*
     int amplitude_a = round(max_amplitude*amplitude_a_fraction);
     int amplitude_b = round(max_amplitude*amplitude_b_fraction);
     int pwmval = calculateSignal(amplitude_a, frequency_a_fraction, amplitude_b, frequency_b_fraction, counter);
+    */
     Serial.println(pwmval);
     analogWrite(pin, pwmval);
     counter++;
 
-    //if (counter == 256) { counter = 0; }
+    if (counter == 256) { counter = 0; }
   }
   receiveSerial();
   actOnNewSerialData();
